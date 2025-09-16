@@ -956,11 +956,11 @@ func (n *Node) unifiedListener(handler func(CoreMessage)) {
 func (n *Node) handleElectionMessage(core CoreMessage) {
 
 	if strings.TrimSpace(core.Type) == "" {
-		log.Printf("[WARN] Ignored CoreMessage with empty type | Raw payload: %s", string(core.Payload))
+		//log.Printf("[WARN] Ignored CoreMessage with empty type | Raw payload: %s", string(core.Payload))
 		return
 	}
 	if len(core.Payload) == 0 {
-		log.Printf("[WARN] Ignored CoreMessage with empty payload | Type: %s", core.Type)
+		//log.Printf("[WARN] Ignored CoreMessage with empty payload | Type: %s", core.Type)
 		return
 	}
 
@@ -983,7 +983,7 @@ func (n *Node) handleElectionMessage(core CoreMessage) {
 			n.mutex.Lock()
 			n.lastHeartbeat = time.Now()
 			n.mutex.Unlock()
-			log.Println("[HEARTBEAT] Received heartbeat from:", hb.LeaderID)
+			//log.Println("[HEARTBEAT] Received heartbeat from:", hb.LeaderID)
 		}
 
 	case TypeReputation:
@@ -1010,7 +1010,7 @@ func (n *Node) handleElectionMessage(core CoreMessage) {
 			log.Printf("[WARN] Ignored invalid role message: %+v", roleMsg)
 			return
 		}
-		log.Printf("[ROLE] Received update: Node %s is now %s", roleMsg.NodeID, roleMsg.Role)
+		//log.Printf("[ROLE] Received update: Node %s is now %s", roleMsg.NodeID, roleMsg.Role)
 		app.GlobalLoggerDB.AddToOptimusLog("ELECTION", fmt.Sprintf("Node %s is now %s", roleMsg.NodeID, roleMsg.Role), runtime.GOOS)
 
 	case TypeAnnouncement:

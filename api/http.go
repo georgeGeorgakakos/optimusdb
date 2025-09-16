@@ -13,8 +13,10 @@ import (
 	"net/http"
 	"optimusdb/app"
 	"optimusdb/config"
+	"optimusdb/tosca"
 	"regexp"
 	"sync"
+	"time"
 )
 
 // PeerTracker stores discovered peers
@@ -89,6 +91,80 @@ func uploadTOSCAHandler(optimusdb *app.KnowledgeBaseDB) http.HandlerFunc {
 	type UploadRequest struct {
 		File string `json:"file"` // Base64-encoded TOSCA YAML
 	}
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			sendErrorResponse(w, http.StatusMethodNotAllowed, "Only POST is allowed")
+			return
+		}
+
+		var req UploadRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.File == "" {
+			sendErrorResponse(w, http.StatusBadRequest, "Invalid JSON payload")
+			return
+		}
+
+		// 1) Base64 decode
+		decoded, err := base64.StdEncoding.DecodeString(req.File)
+		if err != nil {
+			sendErrorResponse(w, http.StatusBadRequest, "Base64 decoding failed")
+			return
+		}
+
+		// 2) Parse TOSCA
+		tmpl, err := tosca.ParseTOSCA(decoded)
+		if err != nil {
+			sendErrorResponse(w, http.StatusBadRequest, fmt.Sprintf("TOSCA parse error: %v", err))
+			return
+		}
+
+		// 3) Compute IDs / counts
+		templateID := tosca.ComputeTemplateID(decoded)
+		nodeCount := tosca.CountNodeTemplates(tmpl)
+		description := tmpl.Description
+
+		// 4) Persist ORIGINAL YAML to OrbitDB (e.g., DsTOSCA_Imported)
+		if optimusdb.DsTOSCA_Imported == nil {
+			sendErrorResponse(w, http.StatusInternalServerError, "TOSCA store not initialized")
+			return
+		}
+		ctx := r.Context()
+		doc := map[string]interface{}{
+			"_id":         templateID,
+			"type":        "tosca_template",
+			"description": description,
+			"nodeCount":   nodeCount,
+			"yaml":        string(decoded),
+			"createdAt":   time.Now().UTC().Format(time.RFC3339),
+		}
+		if _, err := (*optimusdb.DsTOSCA_Imported).Put(ctx, doc); err != nil {
+			sendErrorResponse(w, http.StatusInternalServerError, fmt.Sprintf("Failed to persist to OrbitDB: %v", err))
+			return
+		}
+
+		// 5) Index lightweight metadata into SQLite
+		if app.GlobalKBSQLite == nil {
+			sendErrorResponse(w, http.StatusInternalServerError, "SQLite not initialized")
+			return
+		}
+		if err := app.GlobalKBSQLite.InsertTOSCAMetadata(templateID, description, nodeCount); err != nil {
+			sendErrorResponse(w, http.StatusInternalServerError, fmt.Sprintf("Failed to index metadata: %v", err))
+			return
+		}
+
+		// 6) Respond
+		sendSuccessResponse(w, map[string]interface{}{
+			"message":     "TOSCA uploaded successfully",
+			"template_id": templateID,
+			"node_count":  nodeCount,
+		})
+	}
+}
+
+/*
+func uploadTOSCAHandler(optimusdb *app.KnowledgeBaseDB) http.HandlerFunc {
+	type UploadRequest struct {
+		File string `json:"file"` // Base64-encoded TOSCA YAML
+	}
 
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
@@ -122,6 +198,7 @@ func uploadTOSCAHandler(optimusdb *app.KnowledgeBaseDB) http.HandlerFunc {
 		sendSuccessResponse(w, map[string]string{"message": "TOSCA uploaded successfully"})
 	}
 }
+*/
 
 // gathers all benchmark data from known peers
 func benchmarksHandler(optimusdb *app.KnowledgeBaseDB) http.HandlerFunc {

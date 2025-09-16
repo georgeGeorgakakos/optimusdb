@@ -1,0 +1,19 @@
+components:
+  - name: a_component
+    metrics:
+      - name: cpu_usage_mean
+        formula: 'mean( cpu_usage)'
+        window: 'sliding 15 sec' # to check from the 2nd example
+        output: 'all 15 sec'
+      - name: cpu_usage
+        sensor:
+          type: cAdvisor
+        output: 'all 15 sec'
+      - name: invocations_max
+        formula: 'max( invocations )'
+        window: 'sliding 15 sec'
+        output: 'all 15 sec'
+      - name: invocations
+        sensor:
+          type: openfaas_collector
+        output: 'all 15 sec'

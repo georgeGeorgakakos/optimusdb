@@ -1,9 +1,20 @@
 package tosca
 
 import (
+	"crypto/sha1"
+	"encoding/hex"
 	"fmt"
 	"gopkg.in/yaml.v3"
 )
+
+func ComputeTemplateID(raw []byte) string {
+	h := sha1.Sum(raw)
+	return hex.EncodeToString(h[:])[:16] // short ID
+}
+
+func CountNodeTemplates(t *ServiceTemplate) int {
+	return len(t.TopologyTemplate.NodeTemplates)
+}
 
 type ServiceTemplate struct {
 	ToscaDefinitionsVersion string           `yaml:"tosca_definitions_version"`

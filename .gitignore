@@ -15,7 +15,7 @@
 # vendor/
 
 # Repositories
-optimusdb*
+#optimusdb*
 
 # Macos files
 .DS_Store

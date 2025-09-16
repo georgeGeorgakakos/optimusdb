@@ -15,6 +15,7 @@ type Config struct {
 	DsswresStoreAddr       string `json:"dsswresStoreAddr"`
 	DsswresalocStoreAddr   string `json:"dsswresalocStoreAddr"`
 	PeerID                 string `json:"peerID"`
+	TOSCAImportedStoreAddr string `json:"toscaImportedStoreAddr"`
 }
 
 // LoadConfig loads the persistent config file into config struct

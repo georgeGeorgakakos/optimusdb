@@ -71,3 +71,27 @@ In the config file...
 If you don’t have MetalLB yet, switch all three Services to:
 type: NodePort
 
+# apply your manifest
+kubectl apply -f k3smanifest/optimusdb-k3s.yaml
+
+# watch pods come up
+kubectl -n optimusdb get pods -w
+
+# check PVCs got bound
+kubectl -n optimusdb get pvc
+
+# see the services (and external IPs if you use MetalLB)
+kubectl -n optimusdb get svc
+
+#Logs & health
+kubectl -n optimusdb logs -f statefulset/optimusdb   # all pods stream
+# or a single pod
+kubectl -n optimusdb logs -f pod/optimusdb-1
+
+#Update image / roll forward
+kubectl -n optimusdb set image statefulset/optimusdb optimusdb=ghcr.io/georgegeorgakakos/optimusdb:latest
+kubectl -n optimusdb rollout status statefulset/optimusdb
+
+
+#Scale
+kubectl -n optimusdb scale statefulset/optimusdb --replicas=3

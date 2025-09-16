@@ -391,6 +391,44 @@ func InitPeer(knowledgeBaseDB *KnowledgeBaseDB, rdbms *KnowledgeBaseSQLite, benc
 	////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 	////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
+	// ####################### TOSCA Imported Store ###########################
+	fullRW = &accesscontroller.CreateAccessControllerOptions{
+		Access: map[string][]string{
+			"write": {"*"},
+			"read":  {"*"},
+		},
+	}
+	docstoreOpt = documentstore.DefaultStoreOptsForMap("_id")
+
+	toscaCache := filepath.Join(cache, "tosca_imported")
+	log.Println("DEBUG : OptimusDB instance tosca_imported")
+	log.Printf("DEBUG : cache %s\n", cache)
+	log.Printf("DEBUG : docstore %s\n", toscaCache)
+
+	dbopts = orbitdb.CreateDBOptions{
+		Create:            boolPtr(true),
+		StoreType:         stringPtr("docstore"),
+		StoreSpecificOpts: docstoreOpt,
+		Overwrite:         boolPtr(false),
+		AccessController:  fullRW,
+		Directory:         &toscaCache,
+		Replicate:         boolPtr(true),
+		EventBus:          eventbus.NewBus(),
+		Timeout:           setTimeOut(5),
+	}
+
+	store, err = orbit.Open(ctx, conf.TOSCAImportedStoreAddr, &dbopts)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "%v\nTry resolving it by connecting to a peer, TOSCAImportedStoreAddr\n", err)
+	} else {
+		db := store.(iface.DocumentStore)
+		db.Load(ctx, -1)
+		knowledgeBaseDB.DsTOSCA_Imported = &db
+		GlobalLoggerDB.AddToOptimusLog("INFO",
+			fmt.Sprintf("TOSCA Imported store: %s", db.Address().String()), runtime.GOOS)
+		conf.TOSCAImportedStoreAddr = db.Address().String()
+	}
+
 	//########################################################################
 	knowledgeBaseDB.Config = conf
 	if bench != nil {

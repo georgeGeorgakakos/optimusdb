@@ -151,26 +151,26 @@ func Service(knowledgeBaseDB *KnowledgeBaseDB,
 		logChan <- Log{Info, "Received service request"}
 
 		var res interface{}
-		switch req.Method.Cmd {
-		case GET.Cmd:
+		switch strings.ToLower(req.Method.Cmd) {
+		case strings.ToLower(GET.Cmd):
 			ipfsPath := req.Args[0]
 			logChan <- Log{Info, "Received service request: GET"}
 			res = get(knowledgeBaseDB, ipfsPath, logChan)
 
-		case POST.Cmd:
+		case strings.ToLower(POST.Cmd):
 			file := req.Args[0]
 			node := files.NewBytesFile([]byte(file))
 			logChan <- Log{Info, "Received service request: POST"}
 			fmt.Printf("\nReceived service request: %s : ", POST.Cmd)
 			res = post(knowledgeBaseDB, node, logChan)
 
-		case CONNECT.Cmd:
+		case strings.ToLower(CONNECT.Cmd):
 			// type checking
 			peerId := req.Args[0]
 			logChan <- Log{Info, "Connecting to " + peerId}
 			res = connect(knowledgeBaseDB, peerId, logChan)
 
-		case QUERY.Cmd:
+		case strings.ToLower(QUERY.Cmd):
 			logChan <- Log{Info, "Received service request: QUERY"}
 			fmt.Printf("\nReceived service request: %s : ", QUERY.Cmd)
 
@@ -203,7 +203,7 @@ func Service(knowledgeBaseDB *KnowledgeBaseDB,
 				res = "No records found"
 			}
 
-		case SQLDML.Cmd:
+		case strings.ToLower(SQLDML.Cmd):
 			logChan <- Log{Type: Info, Data: "Received service request: SQL.Cmd"}
 			fmt.Printf("\n[INFO] SQL DML received: %v : %v\n", SQLDML.Cmd, req.SQLDML)
 
@@ -238,7 +238,7 @@ func Service(knowledgeBaseDB *KnowledgeBaseDB,
 		/**
 		Use for contribution records - Data Store is read only
 		*/
-		case CONTRI.Cmd:
+		case strings.ToLower(CONTRI.Cmd):
 			logChan <- Log{Type: Info, Data: "Received service request: CONTRI.Cmd"}
 			var test2 error
 			//rspResults, test2 := crudGetDocStoreRev(knowledgeBaseDB, logChan, req.DSType, hostCID, req.Criteria)
@@ -254,7 +254,7 @@ func Service(knowledgeBaseDB *KnowledgeBaseDB,
 		/**
 		Use for Get method
 		*/
-		case CRUDGET.Cmd:
+		case strings.ToLower(CRUDGET.Cmd):
 			logChan <- Log{Info, "Received service request: CRUDGET"}
 			fmt.Printf("\nReceived service request: %s : \n", CRUDGET.Cmd)
 			var test2 error
@@ -267,7 +267,7 @@ func Service(knowledgeBaseDB *KnowledgeBaseDB,
 				res = rspResults //"OK: Successfully got records"
 			}
 
-		case CRUDPUT.Cmd:
+		case strings.ToLower(CRUDPUT.Cmd):
 			logChan <- Log{Info, "Received service request: CRUDPUT"}
 			//res, _ = crudPutDocStore(knowledgeBaseDB, logChan, req.DSType, req.Criteria)
 			var errorCase error
@@ -286,7 +286,7 @@ func Service(knowledgeBaseDB *KnowledgeBaseDB,
 			//	logChan <- Log{Type: Info, Data: fmt.Sprintf("Metadata generated for resource: %s", metadataEntry.ID)}
 			//}
 
-		case CRUDUPDATE.Cmd:
+		case strings.ToLower(CRUDUPDATE.Cmd):
 			logChan <- Log{Info, "Received service request: CRUDUPDATE"}
 			updatedCount, err := crudUpdateDocStoreRev(knowledgeBaseDB, req.Criteria, req.UpdateData)
 			if err != nil {
@@ -297,7 +297,7 @@ func Service(knowledgeBaseDB *KnowledgeBaseDB,
 				res = fmt.Sprintf("SUCCESS! %d document(s) updated", updatedCount)
 			}
 
-		case CRUDDELETE.Cmd:
+		case strings.ToLower(CRUDDELETE.Cmd):
 			logChan <- Log{Info, "Received service request: CRUDDELETE"}
 			// Perform delete operation in OrbitDB
 			deletedCount, err := crudDeleteDocStoreRev(knowledgeBaseDB, req.Criteria)
@@ -309,12 +309,12 @@ func Service(knowledgeBaseDB *KnowledgeBaseDB,
 				res = fmt.Sprintf("SUCCESS! %d document(s) deleted", deletedCount)
 			}
 
-		case HELP.Cmd:
+		case strings.ToLower(HELP.Cmd):
 			logChan <- Log{Info, "Received service request: HELP"}
 			//fmt.Printf("\nReceived service request: %s : \n", HELP.Cmd)
 			//res = query(knowledgeBaseDB, logChan)
 
-		case BENCHMARK.Cmd:
+		case strings.ToLower(BENCHMARK.Cmd):
 			if !*config.FlagBenchmark {
 				res = "Benchmark is not enabled, use -benchmark to do so"
 				break
@@ -788,21 +788,43 @@ func crudGetDocStoreRev(
 
 	// Initialize the result slice
 	var results []map[string]interface{}
-
 	dbDocStore := *optimusdb.DsSWres
-
 	var selectedDBType string
 
 	switch dbtype {
-	//case "contributions":
-	//	dbDocStore = *optimusdb.Contributions
 	case "validations":
+		selectedDBType = "validations"
+		if optimusdb.Validations == nil {
+			return nil, fmt.Errorf("validations store not initialized")
+		}
 		dbDocStore = *optimusdb.Validations
+
 	case "kbdata":
+		selectedDBType = "kbdata"
+		if optimusdb.KBdata == nil {
+			return nil, fmt.Errorf("kbdata store not initialized")
+		}
 		dbDocStore = *optimusdb.KBdata
+
 	case "kbmetadata":
+		selectedDBType = "kbmetadata"
+		if optimusdb.KBMetadata == nil {
+			return nil, fmt.Errorf("kbmetadata store not initialized")
+		}
 		dbDocStore = *optimusdb.KBMetadata
+
+	case "tosca_imported":
+		selectedDBType = "tosca_imported"
+		if optimusdb.DsTOSCA_Imported == nil {
+			return nil, fmt.Errorf("tosca_imported store not initialized")
+		}
+		dbDocStore = *optimusdb.DsTOSCA_Imported
+
 	default:
+		selectedDBType = "dsswres"
+		if optimusdb.DsSWres == nil {
+			return nil, fmt.Errorf("dsswres store not initialized")
+		}
 		dbDocStore = *optimusdb.DsSWres
 	}
 
