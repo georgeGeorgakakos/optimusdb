@@ -3,9 +3,11 @@ package api
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	files "github.com/ipfs/go-ipfs-files"
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/multiformats/go-multiaddr"
 	"io/ioutil"
@@ -14,6 +16,7 @@ import (
 	"optimusdb/app"
 	"optimusdb/config"
 	"optimusdb/tosca"
+	"os"
 	"regexp"
 	"sync"
 	"time"
@@ -89,7 +92,8 @@ func LogsHandler(kb *app.LoggerSQLite) http.HandlerFunc {
  */
 func uploadTOSCAHandler(optimusdb *app.KnowledgeBaseDB) http.HandlerFunc {
 	type UploadRequest struct {
-		File string `json:"file"` // Base64-encoded TOSCA YAML
+		File     string `json:"file"`               // Base64-encoded TOSCA YAML
+		Filename string `json:"filename,omitempty"` // optional
 	}
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
@@ -146,7 +150,48 @@ func uploadTOSCAHandler(optimusdb *app.KnowledgeBaseDB) http.HandlerFunc {
 			sendErrorResponse(w, http.StatusInternalServerError, "SQLite not initialized")
 			return
 		}
-		if err := app.GlobalKBSQLite.InsertTOSCAMetadata(templateID, description, nodeCount); err != nil {
+
+		// (B) Also add the raw YAML blob to IPFS to get a stable content path (ipfsPath)
+		var ipfsPath string
+		if optimusdb.Orbit != nil {
+			coreAPI := (*optimusdb.Orbit).IPFS()
+			nd := files.NewBytesFile(decoded)
+			p, err := coreAPI.Unixfs().Add(ctx, nd)
+			if err == nil {
+				ipfsPath = p.String() // e.g., /ipfs/<CID>
+			} // if it fails, we'll just leave ipfsPath empty
+		}
+
+		filename := req.Filename
+		if filename == "" {
+			filename = "unknown"
+		}
+		filesize := int64(len(decoded))
+
+		// compute sha256
+		sum := sha256.Sum256(decoded)
+		sha := fmt.Sprintf("%x", sum[:])
+
+		uploader := r.Header.Get("X-User") // optional: caller can set this
+		if uploader == "" {
+			uploader = app.GetAgentName() // fallback to your agent name
+		}
+		sourcePod := os.Getenv("POD_NAME") // set by Kubernetes downward API in your manifest
+		sourceIP, _ := getLocalIPAddress() // your helper already exists
+
+		// (D) Insert into SQLite with the new signature
+		if err := app.GlobalKBSQLite.InsertTOSCAMetadata(
+			templateID,
+			description,
+			nodeCount,
+			filename,
+			filesize,
+			sha,
+			ipfsPath,
+			uploader,
+			sourcePod,
+			sourceIP,
+		); err != nil {
 			sendErrorResponse(w, http.StatusInternalServerError, fmt.Sprintf("Failed to index metadata: %v", err))
 			return
 		}
@@ -156,6 +201,9 @@ func uploadTOSCAHandler(optimusdb *app.KnowledgeBaseDB) http.HandlerFunc {
 			"message":     "TOSCA uploaded successfully",
 			"template_id": templateID,
 			"node_count":  nodeCount,
+			"filename":    filename,
+			"filesize":    filesize,
+			"sha256":      sha,
 		})
 	}
 }

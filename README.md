@@ -46,6 +46,7 @@ Key goals:
 - [Environment Variables](#environment-variables)
 - [HTTP API](#http-api)
 - [Development Notes](#development-notes)
+- [Research Contribution / Beyond State of the Art](#research-contribution--beyond-state-of-the-art)
 - [Contributing](#contributing)
 - [License](#license)
 
@@ -202,6 +203,42 @@ curl -X POST http://localhost:8089/swarmkb/command   -H "Content-Type: applicati
 
 ---
 
+## Research Contribution / Beyond State of the Art
+
+OptimusDB goes beyond existing decentralized database approaches by combining **deployment-ready engineering** with **research-grade novelties**.
+
+### Unique Contributions
+- **HTTP Interface on top of libp2p**
+Most P2P datastores expose JS-only or embedded APIs. OptimusDB introduces a simple RESTful layer (`/command`) on top of libp2p transport, lowering the barrier for adoption with existing tools.
+
+- **Hybrid Data Model**
+Integrated **document CRUD**, **file ingest/retrieval**, and **SQL-like metadata/catalog queries** within the same decentralized peer network. This hybrid mix is uncommon in existing P2P DBs.
+
+- **Deployment Readiness**
+Native **Docker** and **K3s manifests** allow running OptimusDB in edge, cloud, or containerized environments. Few SoTA prototypes are ops-ready from day one.
+
+- **Election & Coordination Layer**
+A modular `election` subsystem supports **leader/coordinator roles** when needed — enabling hybrid decentralized + coordinated execution patterns.
+
+- **Observability & Benchmarking**
+Built-in benchmarking endpoints and structured logs expose latency, replication lag, and peer metrics. Research prototypes rarely embed observability at this level.
+
+### Research Directions (Open Challenges)
+OptimusDB also serves as a testbed to explore the *next generation* of decentralized databases:
+
+| Theme | Gap in Current SoTA | OptimusDB Direction |
+|-------|---------------------|---------------------|
+| **Consistency** | Mostly eventual / CRDT-based | Tunable levels (causal+, quorum reads/writes) |
+| **Durability** | Weak persistence guarantees | Pinning, erasure coding, archival strategies |
+
+
+---
+
+> 📖 OptimusDB is not just an implementation — it is positioned as a **research platform** to advance the state of decentralized databases. Contributions are welcome on replication models, conflict resolution, security primitives, and performance benchmarking.
+
+
+---
+
 ## Contributing
 Issues and PRs are welcome. Please:
 - Open an issue describing the bug/feature.
@@ -210,4 +247,4 @@ Issues and PRs are welcome. Please:
 ---
 
 ## License
-MIT (see [LICENSE](LICENSE)).
+MPL 2.0 (see [LICENSE](LICENSE)).

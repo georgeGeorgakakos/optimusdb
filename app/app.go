@@ -209,7 +209,15 @@ func (kb *KnowledgeBaseSQLite) createTOSCAMetadataTable() error {
 			template_id TEXT NOT NULL UNIQUE,
 			description TEXT,
 			node_templates_count INTEGER,
-			created_at TEXT
+			created_at TEXT,
+			-- New metadata
+			filename             TEXT,           -- original filename uploaded
+			filesize_bytes       INTEGER,        -- file size if known
+			content_sha256       TEXT,           -- hash of the uploaded content
+			ipfs_path            TEXT,           -- /ipfs/<cid> if stored in IPFS
+			uploader             TEXT,           -- free-form (user/agent)
+			source_pod           TEXT,           -- k8s pod that processed the upload
+			source_ip            TEXT            -- client or node IP
 		);`
 	_, err := kb.DB.Exec(tableQuery)
 	if err != nil {
@@ -247,14 +255,50 @@ func (kb *LoggerSQLite) createLogTable() error {
 }
 
 // Create Insert Function for This Table
-func (kb *KnowledgeBaseSQLite) InsertTOSCAMetadata(templateID, description string, nodeCount int) error {
+func (kb *KnowledgeBaseSQLite) InsertTOSCAMetadata(
+	templateID string,
+	description string,
+	nodeCount int,
+	filename string,
+	filesizeBytes int64,
+	contentSHA256 string,
+	ipfsPath string,
+	uploader string,
+	sourcePod string,
+	sourceIP string,
+) error {
 	query := `
-		INSERT INTO toscametadata (template_id, description, node_templates_count, created_at)
-		VALUES (?, ?, ?, datetime('now'))
-		ON CONFLICT(template_id) DO NOTHING;
+	INSERT INTO toscametadata (
+		template_id, description, node_templates_count, created_at,
+		filename, filesize_bytes, content_sha256, ipfs_path, uploader, source_pod, source_ip
+	) VALUES (?, ?, ?, datetime('now'), ?, ?, ?, ?, ?, ?, ?)
+	ON CONFLICT(template_id) DO UPDATE SET
+		description=excluded.description,
+		node_templates_count=excluded.node_templates_count,
+		created_at=excluded.created_at,
+		filename=excluded.filename,
+		filesize_bytes=excluded.filesize_bytes,
+		content_sha256=excluded.content_sha256,
+		ipfs_path=excluded.ipfs_path,
+		uploader=excluded.uploader,
+		source_pod=excluded.source_pod,
+		source_ip=excluded.source_ip;
 	`
-	_, err := kb.DB.Exec(query, templateID, description, nodeCount)
-	GlobalLoggerDB.AddToOptimusLog("INFO", fmt.Sprintf("Inserted record for TOSCAMetadata table"), runtime.GOOS)
+
+	_, err := kb.DB.Exec(query,
+		templateID, description, nodeCount,
+		filename, filesizeBytes, contentSHA256, ipfsPath,
+		uploader, sourcePod, sourceIP,
+	)
+	if err == nil {
+		GlobalLoggerDB.AddToOptimusLog("INFO",
+			fmt.Sprintf("Inserted/updated record for TOSCAMetadata table: template_id=%s, filename=%s", templateID, filename),
+			runtime.GOOS)
+	} else {
+		GlobalLoggerDB.AddToOptimusLog("ERROR",
+			fmt.Sprintf("Failed to insert/update TOSCAMetadata: %v", err),
+			runtime.GOOS)
+	}
 	return err
 }
 
