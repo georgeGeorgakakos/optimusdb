@@ -131,6 +131,34 @@ func main() {
 	}
 
 	// Extract host, pubsub, and orbitdb from your knowledgeBaseDB
+	// --- Set HostID (needed for event payloads & durable client id fallback) ---
+	if knowledgeBaseDB.Node != nil && knowledgeBaseDB.Node.PeerHost != nil {
+		knowledgeBaseDB.HostID = knowledgeBaseDB.Node.PeerHost.ID().String()
+	}
+
+	// --- Start EMS subscriber (ActiveMQ/STOMP) ---
+	// Derive a context from your existing termination context so it cancels cleanly.
+	emsCtx, emsCancel := context.WithCancel(termCtx)
+	cleanupEMS, err := knowledgeBaseDB.StartEMSSubscriber(emsCtx)
+	if err != nil {
+		if app.GlobalLoggerDB != nil {
+			_ = app.GlobalLoggerDB.AddToOptimusLog("ERROR", "EMS start failed: "+err.Error(), runtime.GOOS)
+		} else {
+			log.Printf("[ERROR] EMS start failed: %v", err)
+		}
+	} else {
+		// Arrange cleanup on shutdown
+		go func() {
+			<-termCtx.Done()
+			_ = cleanupEMS()
+			emsCancel()
+		}()
+		if app.GlobalLoggerDB != nil {
+			_ = app.GlobalLoggerDB.AddToOptimusLog("INFO", "EMS subscriber started", runtime.GOOS)
+		} else {
+			log.Println("[INFO] EMS subscriber started")
+		}
+	}
 
 	// channels to communicate requests from all apis to the service routine
 	// for processing

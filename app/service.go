@@ -2478,3 +2478,14 @@ func AwaitRegisterSQLDMLStreamHandler(hostCID host.Host, logChan chan Log) {
 		}
 	})
 }
+
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+// / EMS
+func (db *KnowledgeBaseDB) ProcessEMS(action, resource string, params map[string]interface{}) error {
+	// TODO: implement your actual EMS logic here
+	fmt.Sprintf("[INFO]  EMS %s on %s params=%v", action, resource, params)
+	GlobalLoggerDB.AddToOptimusLog("INFO",
+		fmt.Sprintf("EMS %s on %s params=%v", action, resource, params), "ems")
+	return nil
+}

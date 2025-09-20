@@ -2,6 +2,7 @@ package config
 
 import (
 	"flag"
+	"os"
 	"time"
 )
 
@@ -50,3 +51,20 @@ var FlagLogFilename = flag.String("logfile", "logs/optimusdb.log", "The log path
 var FlagLokiIsDisabled = flag.Bool("LokiIsDisabled", false, "enables Loki telemetry")
 var ElectionMaxRetries = flag.Int("election-retry-limit", 1, "Max number of election retry attempts")
 var ElectionRetryDelay = flag.Duration("election-retry-delay", 3*time.Second, "Initial delay before retrying election")
+
+/** FOr integrating with Monitoring system (EMS)
+ */
+// Messaging / MQ flags
+var (
+	MQURL   = flag.String("mq-url", getenvDefault("MQ_URL", ""), "STOMP broker URL (e.g., tcp://localhost:61613)")
+	MQUser  = flag.String("mq-user", getenvDefault("MQ_USER", "admin"), "STOMP username")
+	MQPass  = flag.String("mq-pass", getenvDefault("MQ_PASS", "admin"), "STOMP password")
+	MQTopic = flag.String("mq-topic", getenvDefault("MQ_TOPIC", "/topic/>"), "STOMP topic path")
+)
+
+func getenvDefault(k, def string) string {
+	if v := os.Getenv(k); v != "" {
+		return v
+	}
+	return def
+}

@@ -1,27 +1,26 @@
 package app
 
 import (
+	orbitdb "berty.tech/go-orbit-db"
+	"berty.tech/go-orbit-db/iface"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/ipfs/kubo/core"
 	"log"
 	"optimusdb/config"
+	"optimusdb/mq"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"sync"
 	"time"
-
-	orbitdb "berty.tech/go-orbit-db"
-	"berty.tech/go-orbit-db/iface"
-	"github.com/ipfs/kubo/core"
 )
 
 var GlobalKBSQLite *KnowledgeBaseSQLite
 var GlobalLoggerDB *LoggerSQLite
-
-//var GlobalReputationDB *ReputationSQLite
 
 // KnowledgeBaseDB we will try to connect to on startup
 // represents the application across go routines
@@ -55,12 +54,22 @@ type KnowledgeBaseDB struct {
 	// Add below:
 	discoveredPeers map[string]bool
 	peersMutex      sync.Mutex
+
+	//For EMS
+	MQEMS  *mq.Client
+	HostID string
 }
 
 // /** this is the struct for the SQL
 //type KnowledgeBaseRDBMS struct {
 //	Session *engine.Session
 //}
+
+type EMSMessage struct {
+	Action   string                 `json:"action"`
+	Resource string                 `json:"resource"`
+	Params   map[string]interface{} `json:"params"`
+}
 
 type LogType uint8
 
@@ -87,12 +96,6 @@ type KnowledgeBaseSQLite struct {
 type LoggerSQLite struct {
 	theLog *sql.DB
 }
-
-// For the Data Store on reputation
-
-//type ReputationSQLite struct {
-//	theLog *sql.DB
-//}
 
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -456,4 +459,36 @@ func (db *KnowledgeBaseDB) GetDiscoveredPeers() []string {
 		peers = append(peers, p)
 	}
 	return peers
+}
+
+type Event struct {
+	Version   string      `json:"version"`   // e.g., "v1"
+	Type      string      `json:"type"`      // "upload","vote","election","heartbeat","log","startup"
+	Timestamp time.Time   `json:"timestamp"` // UTC
+	NodeID    string      `json:"node_id"`   // libp2p host id
+	Payload   interface{} `json:"payload"`   // arbitrary
+}
+
+func (db *KnowledgeBaseDB) publishEvent(ev Event) {
+	if db == nil || db.MQEMS == nil {
+		return
+	}
+	if ev.Version == "" {
+		ev.Version = "v1"
+	}
+	if ev.Timestamp.IsZero() {
+		ev.Timestamp = time.Now().UTC()
+	}
+	if ev.NodeID == "" {
+		ev.NodeID = db.HostID
+	}
+
+	b, err := json.Marshal(ev)
+	if err != nil {
+		GlobalLoggerDB.AddToOptimusLog("ERROR", "MQ publish marshal failed: "+err.Error(), "mq")
+		return
+	}
+
+	// Use the default topic set when you created the client (cfg.Topic)
+	_ = db.MQEMS.PublishJSON("", b)
 }
