@@ -164,6 +164,14 @@ func InitLog() (*LoggerSQLite, error) {
 		log.Fatalf("[ERROR] Table creation failed for Optimus Logger: %v", err)
 		return nil, err
 	}
+
+	//Create tje EMS table events
+	err = GlobalLoggerDB.createEMSEventsTable() // EMS
+	if err != nil {
+		log.Fatalf("[ERROR] Table creation failed for EMS events under the Optimus Logger: %v", err)
+		return nil, err
+	}
+
 	//
 	log.Println("[INFO] SQLite Database Ready at:", rdbmsCache)
 	GlobalLoggerDB.AddToOptimusLog("INFO", fmt.Sprintf("SQLite Database Ready at: %v", rdbmsCache), runtime.GOOS)
@@ -491,4 +499,40 @@ func (db *KnowledgeBaseDB) publishEvent(ev Event) {
 
 	// Use the default topic set when you created the client (cfg.Topic)
 	_ = db.MQEMS.PublishJSON("", b)
+}
+
+// createEMSEventsTable ensures the `ems_events` table exists.
+func (kb *LoggerSQLite) createEMSEventsTable() error {
+	table := `
+	CREATE TABLE IF NOT EXISTS ems_events (
+		id            INTEGER PRIMARY KEY AUTOINCREMENT,
+		received_at   TEXT,          -- UTC RFC3339
+		node_id       TEXT,          -- libp2p host id
+		client_id     TEXT,          -- MQ_CLIENT_ID (or fallback)
+		topic         TEXT,          -- destination topic
+		action        TEXT,          -- parsed from payload
+		resource      TEXT,          -- parsed from payload
+		params_json   TEXT,          -- marshaled params (if parsed)
+		raw_json      TEXT           -- original message body
+	);
+	CREATE INDEX IF NOT EXISTS idx_ems_events_time ON ems_events(received_at);
+	CREATE INDEX IF NOT EXISTS idx_ems_events_act_res ON ems_events(action, resource);
+	`
+	_, err := kb.theLog.Exec(table)
+	return err
+}
+
+// Insert Helper
+func (kb *LoggerSQLite) InsertEMSEvent(
+	receivedAt time.Time,
+	nodeID, clientID, topic, action, resource, paramsJSON, rawJSON string,
+) error {
+	const q = `
+	INSERT INTO ems_events (received_at, node_id, client_id, topic, action, resource, params_json, raw_json)
+	VALUES (?, ?, ?, ?, ?, ?, ?, ?);`
+	_, err := kb.theLog.Exec(q,
+		receivedAt.UTC().Format(time.RFC3339),
+		nodeID, clientID, topic, action, resource, paramsJSON, rawJSON,
+	)
+	return err
 }

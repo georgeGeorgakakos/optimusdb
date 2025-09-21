@@ -18,11 +18,11 @@ func (db *KnowledgeBaseDB) StartEMSSubscriber(ctx context.Context) (cleanup func
 	// ---- Read config from env (works great in K3s) ----
 	serviceName := getenvDefault("EMS_SERVICE_NAME", "ems-broker") // k8s Service name
 	namespace := getenvDefault("EMS_NAMESPACE", "messaging")       // k8s namespace
-	stompPort := getenvIntDefault("EMS_STOMP_PORT", 61613)
-	topic := getenvDefault("EMS_TOPIC", "/topic/ems.events")
+	stompPort := getenvIntDefault("EMS_STOMP_PORT", 61610)
+	topic := getenvDefault("EMS_TOPIC", "/topic/>")
 
-	user := getenvDefault("MQ_USER", "admin")
-	pass := getenvDefault("MQ_PASS", "admin")
+	user := getenvDefault("MQ_USER", "aaa")
+	pass := getenvDefault("MQ_PASS", "111")
 	clientID := os.Getenv("MQ_CLIENT_ID") // required for durable
 	useIP := getenvBoolDefault("EMS_USE_IP", false)
 
@@ -49,6 +49,15 @@ func (db *KnowledgeBaseDB) StartEMSSubscriber(ctx context.Context) (cleanup func
 			return nil, fmt.Errorf("DNS resolve failed for %s: %w", host, err)
 		}
 		addr = fmt.Sprintf("%s:%d", ips[0].IP.String(), stompPort)
+	}
+
+	// Log the exact address that will be dialed
+	if GlobalLoggerDB != nil {
+		_ = GlobalLoggerDB.AddToOptimusLog(
+			"INFO",
+			fmt.Sprintf("EMS dialing %s topic=%s durable=%v clientID=%s", addr, topic, durable, clientID),
+			"ems",
+		)
 	}
 
 	// ---- Create STOMP client (via mq package) ----
@@ -107,16 +116,56 @@ func (db *KnowledgeBaseDB) StartEMSSubscriber(ctx context.Context) (cleanup func
 	}, nil
 }
 
-// handleEMSMessage parses payload and routes to your internal EMS processor
+// Persist every message in handleEMSMessage i.e. from EMS topic
 func (db *KnowledgeBaseDB) handleEMSMessage(body []byte) error {
+	now := time.Now().UTC()
+	topic := getenvDefault("EMS_TOPIC", "/topic/ems.events")
+	clientID := os.Getenv("MQ_CLIENT_ID")
+
+	// Try to parse; we still store raw if parsing fails.
 	var m EMSMessage
-	if err := json.Unmarshal(body, &m); err != nil {
-		if GlobalLoggerDB != nil {
-			_ = GlobalLoggerDB.AddToOptimusLog("ERROR", "EMS unmarshal failed: "+err.Error(), "ems")
+	parseErr := json.Unmarshal(body, &m)
+
+	// Persist one row per message (raw + parsed fields)
+	if GlobalLoggerDB != nil {
+		paramsJSON := ""
+		if parseErr == nil && m.Params != nil {
+			if b, err := json.Marshal(m.Params); err == nil {
+				paramsJSON = string(b)
+			}
 		}
-		return err
+		_ = GlobalLoggerDB.InsertEMSEvent(
+			now, db.HostID, clientID, topic,
+			m.Action, m.Resource, paramsJSON, string(body),
+		)
+
+		// Optional: short line to optimusLogger for quick grep/tail
+		if parseErr != nil {
+			_ = GlobalLoggerDB.AddToOptimusLog("ERROR",
+				"EMS recv (unmarshal failed): "+truncate(string(body), 180), "ems")
+		} else {
+			_ = GlobalLoggerDB.AddToOptimusLog("INFO",
+				fmt.Sprintf("EMS recv action=%s resource=%s body=%s",
+					m.Action, m.Resource, truncate(string(body), 160)), "ems")
+		}
+	}
+
+	// Hand off to domain logic (already logs in ProcessEMS)
+	if parseErr != nil {
+		return parseErr
 	}
 	return db.ProcessEMS(m.Action, m.Resource, m.Params)
+}
+
+// tiny helper used above
+func truncate(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	if n <= 3 {
+		return s[:n]
+	}
+	return s[:n-3] + "..."
 }
 
 // Simple helpers (stay local to this file)

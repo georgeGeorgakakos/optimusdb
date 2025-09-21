@@ -95,3 +95,146 @@ kubectl -n optimusdb rollout status statefulset/optimusdb
 
 #Scale
 kubectl -n optimusdb scale statefulset/optimusdb --replicas=3
+
+
+#######################################################################################################################
+#################################DEBUG EMS - OptimusDB Integration    #################################################
+#######################################################################################################################
+#######################################################################################################################
+
+sudo kubectl set env statefulset/optimusdb \
+  EMS_SERVICE_NAME=ems-broker \
+  EMS_NAMESPACE=messaging \
+  EMS_STOMP_PORT=61613 \
+  EMS_TOPIC=/topic/> \
+  EMS_DURABLE=1 \
+  EMS_SUB_NAME=optimusdb-ems \
+  MQ_USER=aaa \
+  MQ_PASS=111
+
+# give each pod a stable client id (here: use pod name)
+# (Downward API via kubectl set env can’t reference fieldRef, so just set a literal per pod if needed, or put it in the YAML spec)
+
+
+
+sudo kubectl set env statefulset/optimusdb \
+  EMS_SERVICE_NAME=emsserver-ems-server \
+  EMS_NAMESPACE=default \
+  EMS_STOMP_PORT=61613 \
+  EMS_TOPIC=/topic/ems.events \
+  EMS_DURABLE=1 \
+  EMS_SUB_NAME=optimusdb-ems \
+  MQ_USER=aaa \
+  MQ_PASS=111
+# (Best: set MQ_CLIENT_ID via Downward API in YAML; otherwise skip)
+sudo kubectl rollout restart statefulset/optimusdb
+sudo kubectl rollout status statefulset/optimusdb
+
+
+
+###
+###
+sudo kubectl set env statefulset/optimusdb \
+  EMS_SERVICE_NAME=emsserver-ems-server \
+  EMS_NAMESPACE=default \
+  EMS_STOMP_PORT=61610 \
+  EMS_TOPIC=/topic/> \
+  EMS_DURABLE=1 \
+  EMS_SUB_NAME=optimusdb-ems \
+  MQ_USER=aaa \
+  MQ_PASS=111
+
+sudo kubectl rollout restart statefulset/optimusdb
+sudo kubectl rollout status statefulset/optimusdb
+
+
+1) Show the connect errors (includes host:port)
+sudo kubectl exec -it optimusdb-0 -- sh -lc "DB=\$(find \"\$HOME/.cache/optimusdb\" -type f -name optimuslog.db | head -n1); \
+sqlite3 -header -column \"\$DB\" \
+\"SELECT timestamp, level, substr(message,1,300) AS message
+   FROM optimusLogger
+  WHERE message LIKE '%EMS MQ connect failed%' OR message LIKE '%EMS start failed%'
+  ORDER BY id DESC LIMIT 10;\""
+
+
+2) Show the successful subscribe line
+sudo kubectl exec -it optimusdb-0 -- sh -lc "DB=\$(find \"\$HOME/.cache/optimusdb\" -type f -name optimuslog.db | head -n1); \
+sqlite3 -header -column \"\$DB\" \
+\"SELECT timestamp, level, substr(message,1,300) AS message
+   FROM optimusLogger
+  WHERE message LIKE '%EMS subscribed to%'
+  ORDER BY id DESC LIMIT 10;\""
+
+
+3) Only EMS-tagged rows (source='ems')
+sudo kubectl exec -it optimusdb-0 -- sh -lc "DB=\$(find \"\$HOME/.cache/optimusdb\" -type f -name optimuslog.db | head -n1); \
+sqlite3 -header -column \"\$DB\" \
+\"SELECT id, timestamp, level, source, substr(message,1,200) AS message
+   FROM optimusLogger
+  WHERE source = 'ems'
+  ORDER BY id DESC LIMIT 50;\""
+
+### Debug commands
+###The subscriber uses whatever is in the pod env EMS_STOMP_PORT and the Service’s targetPort.
+
+ubuntu@ip-172-31-26-15:~$ # 1) What the pod is configured to dial
+sudo kubectl exec -it optimusdb-0 -- env | egrep '^(EMS_SERVICE_NAME|EMS_NAMESPACE|EMS_STOMP_PORT|EMS_TOPIC)'
+
+# 2) What the Service exposes (look for stomp… targetPort)
+sudo kubectl -n default describe svc emsserver-ems-server | egrep -A2 'Ports:|stomp'
+
+# 3) The endpoints behind the Service (actual pod IP:port)
+sudo kubectl -n default get endpoints emsserver-ems-server -o wide
+EMS_STOMP_PORT=61610
+EMS_SERVICE_NAME=emsserver-ems-server
+EMS_NAMESPACE=default
+EMS_TOPIC=/topic/
+Port:                     stomp  61613/TCP
+TargetPort:               61613/TCP
+Endpoints:                10.42.0.244:61613
+Port:                     stomp-61610  61610/TCP
+TargetPort:               61610/TCP
+Endpoints:                10.42.0.244:61610
+NAME                   ENDPOINTS                                                           AGE
+emsserver-ems-server   10.42.0.244:61613,10.42.0.244:61610,10.42.0.244:61616 + 1 more...   2d21h
+
+
+########################################################################################################################
+####    Commands to verify the EMS topics are persisted after deployment in optimusDB
+####
+
+A) Watch per-message lines
+sudo kubectl exec -it optimusdb-0 -- sh -lc '
+DB=$(find "$HOME/.cache/optimusdb" -type f -name optimuslog.db | head -n1)
+echo "SELECT timestamp, level, substr(message,1,220)
+      FROM optimusLogger
+      WHERE source = '\''ems'\''
+      ORDER BY id DESC LIMIT 20;" | sqlite3 -header -column "$DB"
+'
+
+
+B) List rows persisted in ems_events
+sudo kubectl exec -it optimusdb-0 -- sh -lc '
+DB=$(find "$HOME/.cache/optimusdb" -type f -name optimuslog.db | head -n1)
+echo "SELECT received_at, action, resource, substr(params_json,1,160)
+      FROM ems_events
+      ORDER BY id DESC LIMIT 20;" | sqlite3 -header -column "$DB"
+'
+
+C) Fire a test message (from a temp pod with Bash)
+sudo kubectl run -it stomp-test --rm --restart=Never \
+  --image=ghcr.io/nicolaka/netshoot:latest -- \
+  bash -lc '
+h="emsserver-ems-server.default.svc.cluster.local"
+p=61610
+u="${MQ_USER:-admin}"
+pw="${MQ_PASS:-admin}"
+t="${EMS_TOPIC:-/topic/ems.events}"
+
+exec 3<>/dev/tcp/$h/$p || { echo "cannot connect to $h:$p"; exit 1; }
+printf "CONNECT\naccept-version:1.2\nhost:/\nlogin:%s\npasscode:%s\n\n\0" "$u" "$pw" >&3
+sleep 0.2
+body="{\"action\":\"probe\",\"resource\":\"health\",\"params\":{\"ping\":true}}"
+printf "SEND\ndestination:%s\ncontent-type:application/json\ncontent-length:%d\n\n%s\0" "$t" "${#body}" "$body" >&3
+echo "sent"
+'
