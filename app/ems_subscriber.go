@@ -119,7 +119,7 @@ func (db *KnowledgeBaseDB) StartEMSSubscriber(ctx context.Context) (cleanup func
 // Persist every message in handleEMSMessage i.e. from EMS topic
 func (db *KnowledgeBaseDB) handleEMSMessage(body []byte) error {
 	now := time.Now().UTC()
-	topic := getenvDefault("EMS_TOPIC", "/topic/ems.events")
+	topic := getenvDefault("EMS_TOPIC", "/topic/>")
 	clientID := os.Getenv("MQ_CLIENT_ID")
 
 	// Try to parse; we still store raw if parsing fails.

@@ -121,7 +121,7 @@ sudo kubectl set env statefulset/optimusdb \
   EMS_SERVICE_NAME=emsserver-ems-server \
   EMS_NAMESPACE=default \
   EMS_STOMP_PORT=61613 \
-  EMS_TOPIC=/topic/ems.events \
+  EMS_TOPIC=/topic/> \
   EMS_DURABLE=1 \
   EMS_SUB_NAME=optimusdb-ems \
   MQ_USER=aaa \
@@ -200,6 +200,27 @@ emsserver-ems-server   10.42.0.244:61613,10.42.0.244:61610,10.42.0.244:61616 + 1
 
 
 ########################################################################################################################
+####    Commands to redeploy
+####
+
+# Delete all OptimusDB resources
+sudo kubectl delete -f optimusdb-k3s.yaml
+
+ubuntu@ip-172-31-26-15:/opt/iccs/manifests$ sudo kubectl get pvc -A | grep optimusdb
+default     data-optimusdb-0   Bound    pvc-5cca430b-5114-4dab-ac01-09a7ba048c7b   5Gi        RWO            local-path     <unset>                 50m
+default     data-optimusdb-1   Bound    pvc-c17880eb-41e7-4b46-ab30-d8a4c04c4d3a   5Gi        RWO            local-path     <unset>                 50m
+default     data-optimusdb-2   Bound    pvc-232e1e61-c520-4699-ba12-739fb26ccad7   5Gi        RWO            local-path     <unset>                 50m
+
+
+sudo kubectl delete pvc data-optimusdb-0 -n default
+sudo kubectl delete pvc data-optimusdb-1 -n default
+sudo kubectl delete pvc data-optimusdb-2 -n default
+
+#verify
+sudo kubectl get pods -A | grep optimusdb
+sudo kubectl get svc -A | grep optimusdb
+
+########################################################################################################################
 ####    Commands to verify the EMS topics are persisted after deployment in optimusDB
 ####
 
@@ -229,7 +250,7 @@ h="emsserver-ems-server.default.svc.cluster.local"
 p=61610
 u="${MQ_USER:-admin}"
 pw="${MQ_PASS:-admin}"
-t="${EMS_TOPIC:-/topic/ems.events}"
+t="${EMS_TOPIC:-/topic/>}"
 
 exec 3<>/dev/tcp/$h/$p || { echo "cannot connect to $h:$p"; exit 1; }
 printf "CONNECT\naccept-version:1.2\nhost:/\nlogin:%s\npasscode:%s\n\n\0" "$u" "$pw" >&3
