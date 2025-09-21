@@ -1,3 +1,4 @@
+# Update 21.09.2025
 apiVersion: v1
 kind: Namespace
 metadata:
@@ -7,7 +8,7 @@ apiVersion: v1
 kind: ConfigMap
 metadata:
   name: optimusdb-config
-  namespace: optimusdb
+  namespace: default
 data:
   OPTIMUSDB_API_PORT: "8089"
   OPTIMUSDB_P2P_PORT: "4001"
@@ -21,7 +22,7 @@ apiVersion: v1
 kind: Service
 metadata:
   name: optimusdb-headless
-  namespace: optimusdb
+  namespace: default
 spec:
   clusterIP: None
   selector:
@@ -41,7 +42,7 @@ apiVersion: apps/v1
 kind: StatefulSet
 metadata:
   name: optimusdb
-  namespace: optimusdb
+  namespace: default
 spec:
   serviceName: optimusdb-headless
   replicas: 3
@@ -56,6 +57,7 @@ spec:
       containers:
         - name: optimusdb
           image: ghcr.io/georgegeorgakakos/optimusdb:latest
+          #imagePullPolicy: IfNotPresent
           imagePullPolicy: Always
           ports:
             - name: api
@@ -79,7 +81,23 @@ spec:
               valueFrom: { configMapKeyRef: { name: optimusdb-config, key: OPTIMUSDB_LOG_LEVEL } }
             # - name: OPTIMUSDB_SEED_PEERS
             #   valueFrom: { configMapKeyRef: { name: optimusdb-config, key: OPTIMUSDB_SEED_PEERS } }
-
+            # EMS integration (ActiveMQ STOMP)
+            - name: EMS_SERVICE_NAME
+              value: "emsserver-ems-server"
+            - name: EMS_NAMESPACE
+              value: "default"
+            - name: EMS_STOMP_PORT
+              value: "61610"          # matches EMS container
+            - name: EMS_TOPIC
+              value: "/topic/>"       # subscribe to ALL topics
+            - name: MQ_USER
+              value: "aaa"
+            - name: MQ_PASS
+              value: "111"
+            - name: MQ_CLIENT_ID
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name # each pod gets unique durable client ID
           # Safer generic probes (TCP) in case /healthz isn’t implemented
           readinessProbe:
             tcpSocket: { port: 8089 }
@@ -110,7 +128,7 @@ apiVersion: v1
 kind: Service
 metadata:
   name: optimusdb-0
-  namespace: optimusdb
+  namespace: default
 spec:
   type: LoadBalancer
   externalTrafficPolicy: Cluster
@@ -134,7 +152,7 @@ apiVersion: v1
 kind: Service
 metadata:
   name: optimusdb-1
-  namespace: optimusdb
+  namespace: default
 spec:
   type: LoadBalancer
   externalTrafficPolicy: Cluster
@@ -158,7 +176,7 @@ apiVersion: v1
 kind: Service
 metadata:
   name: optimusdb-2
-  namespace: optimusdb
+  namespace: default
 spec:
   type: LoadBalancer
   externalTrafficPolicy: Cluster

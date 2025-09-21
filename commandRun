@@ -220,6 +220,7 @@ sudo kubectl delete pvc data-optimusdb-2 -n default
 sudo kubectl get pods -A | grep optimusdb
 sudo kubectl get svc -A | grep optimusdb
 
+sudo kubectl apply -f optimusdb-k3s.yaml
 ########################################################################################################################
 ####    Commands to verify the EMS topics are persisted after deployment in optimusDB
 ####
@@ -259,3 +260,47 @@ body="{\"action\":\"probe\",\"resource\":\"health\",\"params\":{\"ping\":true}}"
 printf "SEND\ndestination:%s\ncontent-type:application/json\ncontent-length:%d\n\n%s\0" "$t" "${#body}" "$body" >&3
 echo "sent"
 '
+
+
+### working
+sudo kubectl exec -it optimusdb-0 -- \
+  sh -lc 'DB=$(find $HOME/.cache/optimusdb -type f -name optimuslog.db | head -n1); \
+sqlite3 -header -column "$DB" "
+  SELECT received_at, client_id, topic, substr(raw_json,1,160)
+  FROM ems_events
+  ORDER BY id DESC LIMIT 20;
+"'
+
+
+
+
+# Dump ALL logs from optimusLogger into a CSV so you can inspect
+sudo kubectl exec -it optimusdb-0 -- sh -lc '
+DB=$(find "$HOME/.cache/optimusdb" -type f -name optimuslog.db | head -n1)
+sqlite3 -header -csv "$DB" "
+  SELECT id, timestamp, level, source, message
+  FROM optimusLogger
+  ORDER BY id;
+" ' > optimusdb_logs.csv
+
+# Check file size
+ls -lh optimusdb_logs.csv
+
+# Peek at the first few lines
+head -n 20 optimusdb_logs.csv
+
+################################
+sudo kubectl exec -it optimusdb-0 -- sh -lc '
+DB=$(find "$HOME/.cache/optimusdb" -type f -name optimuslog.db | head -n1)
+sqlite3 -header -column "$DB" "
+  SELECT id,
+         received_at,
+         client_id,
+         topic,
+         action,
+         resource,
+         substr(params_json,1,120) AS params
+  FROM ems_events
+  ORDER BY id DESC
+  LIMIT 200;
+"'

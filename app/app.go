@@ -536,3 +536,44 @@ func (kb *LoggerSQLite) InsertEMSEvent(
 	)
 	return err
 }
+
+// Run a SELECT against the logger DB (optimuslog.db) and return []map[string]interface{}.
+func (kb *LoggerSQLite) SelectAll(stmt string) ([]map[string]interface{}, error) {
+	if kb == nil || kb.theLog == nil {
+		return nil, errors.New("logger DB not initialized")
+	}
+	rows, err := kb.theLog.Query(stmt)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	cols, err := rows.Columns()
+	if err != nil {
+		return nil, err
+	}
+
+	var out []map[string]interface{}
+	vals := make([]interface{}, len(cols))
+	ptrs := make([]interface{}, len(cols))
+	for i := range vals {
+		ptrs[i] = &vals[i]
+	}
+
+	for rows.Next() {
+		if err := rows.Scan(ptrs...); err != nil {
+			return nil, err
+		}
+		row := make(map[string]interface{}, len(cols))
+		for i, c := range cols {
+			switch v := vals[i].(type) {
+			case []byte:
+				row[c] = string(v)
+			default:
+				row[c] = v
+			}
+		}
+		out = append(out, row)
+	}
+	return out, rows.Err()
+}

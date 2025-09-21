@@ -10,9 +10,9 @@ set -euo pipefail
 # ============================================================
 
 FILE="${1:-/home/ubuntu/mytosca.yaml}"   # Path to TOSCA file
-PORT="${2:-8089}"                        # OptimusDB HTTP port
+PORT="${2:-18001}"                        # OptimusDB HTTP port
 CONTEXT="${3:-swarmkb}"                  # API context
-NAMESPACE="${4:-optimusdb}"              # Kubernetes namespace
+NAMESPACE="${4:-default}"              # Kubernetes namespace
 
 TEMPLATE_ID=""
 FILENAME="$(basename "$FILE")"

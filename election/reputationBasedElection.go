@@ -482,7 +482,7 @@ func (n *Node) announceLeader(leaderID string) {
 		n.role = "Follower"
 	}
 
-	log.Printf("[ROLE] Node %s is now %s", n.host.ID().String(), n.role)
+	//log.Printf("[ROLE] Node %s is now %s", n.host.ID().String(), n.role)
 	app.GlobalLoggerDB.AddToOptimusLog("ELECTION", fmt.Sprintf("Node %s is now %s", n.host.ID().String(), n.role), runtime.GOOS)
 
 	n.publishRole()

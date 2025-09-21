@@ -18,6 +18,8 @@ import (
 	"optimusdb/tosca"
 	"os"
 	"regexp"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 )
@@ -492,15 +494,160 @@ func ServeHTTP(optimusdb *app.KnowledgeBaseDB, theLog *app.LoggerSQLite, reqChan
 	/**
 	simple HTTP endpoint to fetch the communication with EMS
 	*/
-	server.Handle("/"+*config.FlagContext+"/ems", mw(peersHandler()))
+	//server.Handle("/"+*config.FlagContext+"/ems", mw(peersHandler()))
+	server.Handle("/"+*config.FlagContext+"/ems",
+		mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			sendSuccessResponse(w, map[string]string{
+				"hint": "Try /" + *config.FlagContext + "/ems/logs and /" + *config.FlagContext + "/ems/events",
+			})
+		})))
 
 	/**
 	simple HTTP endpoint to fetch the communication with Logging of OptimusDB
 	*/
 	server.Handle("/"+*config.FlagContext+"/log", mw(LogsHandler(theLog)))
 
-	//fmt.Println("config.FlagBenchmark is:", *config.FlagBenchmark)
+	/**
+	Added as context to be retrieved
+	*/
+	// GET /<context>/ems/logs?limit=50&level=ERROR&since_min=60
+	server.Handle("/"+*config.FlagContext+"/ems/logs",
+		mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if app.GlobalLoggerDB == nil {
+				sendErrorResponse(w, http.StatusServiceUnavailable, "logger DB not ready")
+				return
+			}
+			q := r.URL.Query()
 
+			// limit (safe clamp)
+			limit := 50
+			if s := q.Get("limit"); s != "" {
+				if n, err := strconv.Atoi(s); err == nil && n > 0 && n <= 1000 {
+					limit = n
+				}
+			}
+			// level (whitelist)
+			level := strings.ToUpper(strings.TrimSpace(q.Get("level")))
+			if level != "INFO" && level != "WARN" && level != "ERROR" && level != "DEBUG" {
+				level = ""
+			}
+			// since_min (relative time window)
+			sinceMin := 0
+			if s := q.Get("since_min"); s != "" {
+				if n, err := strconv.Atoi(s); err == nil && n > 0 && n <= 24*60 {
+					sinceMin = n
+				}
+			}
+
+			// Build WHERE
+			where := `source = 'ems'`
+			if level != "" {
+				where += fmt.Sprintf(` AND level = '%s'`, level)
+			}
+			if sinceMin > 0 {
+				where += fmt.Sprintf(` AND timestamp >= datetime('now','-%d minutes')`, sinceMin)
+			}
+
+			sql := fmt.Sprintf(`
+			SELECT id, timestamp, level, source, message
+			FROM optimusLogger
+			WHERE %s
+			ORDER BY id DESC
+			LIMIT %d;`, where, limit)
+
+			rows, err := app.GlobalLoggerDB.SelectAll(sql)
+			if err != nil {
+				sendErrorResponse(w, http.StatusInternalServerError, "query failed: "+err.Error())
+				return
+			}
+			sendJSONResponse(w, map[string]interface{}{"records": rows})
+		})))
+
+	// GET /<context>/ems/events?limit=50&since_min=60
+	server.Handle("/"+*config.FlagContext+"/ems/events",
+		mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if app.GlobalLoggerDB == nil {
+				sendErrorResponse(w, http.StatusServiceUnavailable, "logger DB not ready")
+				return
+			}
+			q := r.URL.Query()
+			limit := 50
+			if s := q.Get("limit"); s != "" {
+				if n, err := strconv.Atoi(s); err == nil && n > 0 && n <= 1000 {
+					limit = n
+				}
+			}
+			sinceMin := 0
+			if s := q.Get("since_min"); s != "" {
+				if n, err := strconv.Atoi(s); err == nil && n > 0 && n <= 24*60 {
+					sinceMin = n
+				}
+			}
+
+			where := `1=1`
+			if sinceMin > 0 {
+				where += fmt.Sprintf(` AND received_at >= datetime('now','-%d minutes')`, sinceMin)
+			}
+
+			// Note: ems_events lives in the logger DB
+			sql := fmt.Sprintf(`
+			SELECT id, received_at, client_id, topic, action, resource,
+			       substr(params_json,1,240) AS params,
+			       substr(raw_json,1,240)    AS raw
+			FROM ems_events
+			WHERE %s
+			ORDER BY id DESC
+			LIMIT %d;`, where, limit)
+
+			rows, err := app.GlobalLoggerDB.SelectAll(sql)
+			if err != nil {
+				// If table doesn’t exist yet, return a friendly message
+				if strings.Contains(strings.ToLower(err.Error()), "no such table") {
+					sendErrorResponse(w, http.StatusNotFound, "ems_events table not found (enable EMS persistence or redeploy with events table)")
+					return
+				}
+				sendErrorResponse(w, http.StatusInternalServerError, "query failed: "+err.Error())
+				return
+			}
+			sendJSONResponse(w, map[string]interface{}{"records": rows})
+		})))
+
+	// GET /<context>/ems/sql?q=<URL-encoded SQL>
+	// or POST with {"sql": "..."} to run against the logger DB (ems_events lives here)
+	server.Handle("/"+*config.FlagContext+"/ems/sql",
+		mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if app.GlobalLoggerDB == nil {
+				sendErrorResponse(w, http.StatusServiceUnavailable, "logger DB not ready")
+				return
+			}
+			var sql string
+			if r.Method == http.MethodGet {
+				sql = r.URL.Query().Get("q")
+			} else if r.Method == http.MethodPost {
+				var body struct {
+					SQL string `json:"sql"`
+				}
+				_ = json.NewDecoder(r.Body).Decode(&body)
+				sql = body.SQL
+			} else {
+				sendErrorResponse(w, http.StatusMethodNotAllowed, "use GET or POST")
+				return
+			}
+			sql = strings.TrimSpace(sql)
+			if sql == "" {
+				sendErrorResponse(w, http.StatusBadRequest, "missing SQL")
+				return
+			}
+			rows, err := app.GlobalLoggerDB.SelectAll(sql)
+			if err != nil {
+				sendErrorResponse(w, http.StatusBadRequest, "query failed: "+err.Error())
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string]interface{}{"records": rows})
+		})))
+
+	/////////
 	// register benchmarks handler which is specific for this API because it's
 	// used to gather all peers data
 	if *config.FlagBenchmark {
@@ -552,4 +699,11 @@ func getLocalIPAddress() (string, error) {
 	}
 
 	return "", nil
+}
+
+// sendJSONResponse writes a 200 JSON body.
+func sendJSONResponse(w http.ResponseWriter, payload interface{}) {
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(payload)
 }
