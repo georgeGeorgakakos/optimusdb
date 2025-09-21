@@ -1,9 +1,9 @@
 # Update 21.09.2025
-apiVersion: v1
-kind: Namespace
-metadata:
-  name: optimusdb
----
+#apiVersion: v1
+#kind: Namespace
+#metadata:
+#  name: optimusdb
+#---
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -87,7 +87,7 @@ spec:
             - name: EMS_NAMESPACE
               value: "default"
             - name: EMS_STOMP_PORT
-              value: "61610"          # matches EMS container
+              value: "61613"          # matches EMS container
             - name: EMS_TOPIC
               value: "/topic/>"       # subscribe to ALL topics
             - name: MQ_USER

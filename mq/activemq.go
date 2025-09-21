@@ -155,7 +155,7 @@ func (c *Client) Close() error {
 // For EMS debug//
 func (c *Config) setDefaults() {
 	if c.Port == 0 {
-		c.Port = 61610
+		c.Port = 61613
 	}
 	if c.Namespace == "" {
 		c.Namespace = "default"
