@@ -87,7 +87,7 @@ spec:
             - name: EMS_NAMESPACE
               value: "default"
             - name: EMS_STOMP_PORT
-              value: "61613"          # matches EMS container
+              value: "61610"          # matches EMS container
             - name: EMS_TOPIC
               value: "/topic/>"       # subscribe to ALL topics
             - name: MQ_USER

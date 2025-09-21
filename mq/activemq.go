@@ -155,7 +155,7 @@ func (c *Client) Close() error {
 // For EMS debug//
 func (c *Config) setDefaults() {
 	if c.Port == 0 {
-		c.Port = 61613
+		c.Port = 61610
 	}
 	if c.Namespace == "" {
 		c.Namespace = "default"
@@ -223,7 +223,7 @@ func (c *Config) resolveAddr(ctx context.Context) (string, error) {
 		return "", errors.New("no broker host resolved (provide URL, Host, or ServiceName)")
 	}
 	if port == 0 {
-		port = 61613
+		port = 61610
 	}
 
 	addr := net.JoinHostPort(host, strconv.Itoa(port))

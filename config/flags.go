@@ -56,7 +56,7 @@ var ElectionRetryDelay = flag.Duration("election-retry-delay", 3*time.Second, "I
  */
 // Messaging / MQ flags
 var (
-	MQURL   = flag.String("mq-url", getenvDefault("MQ_URL", ""), "STOMP broker URL (e.g., tcp://localhost:61613)")
+	MQURL   = flag.String("mq-url", getenvDefault("MQ_URL", ""), "STOMP broker URL (e.g., tcp://localhost:61610)")
 	MQUser  = flag.String("mq-user", getenvDefault("MQ_USER", "admin"), "STOMP username")
 	MQPass  = flag.String("mq-pass", getenvDefault("MQ_PASS", "admin"), "STOMP password")
 	MQTopic = flag.String("mq-topic", getenvDefault("MQ_TOPIC", "/topic/>"), "STOMP topic path")

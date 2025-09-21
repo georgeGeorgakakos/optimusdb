@@ -18,7 +18,7 @@ func (db *KnowledgeBaseDB) StartEMSSubscriber(ctx context.Context) (cleanup func
 	// ---- Read config from env (works great in K3s) ----
 	serviceName := getenvDefault("EMS_SERVICE_NAME", "ems-broker") // k8s Service name
 	namespace := getenvDefault("EMS_NAMESPACE", "messaging")       // k8s namespace
-	stompPort := getenvIntDefault("EMS_STOMP_PORT", 61613)
+	stompPort := getenvIntDefault("EMS_STOMP_PORT", 61610)
 	topic := getenvDefault("EMS_TOPIC", "/topic/>")
 
 	user := getenvDefault("MQ_USER", "aaa")
