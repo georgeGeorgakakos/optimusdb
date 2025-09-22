@@ -10,6 +10,7 @@ import (
 )
 
 // Config is your EMS connection config (same fields you already use)
+/*
 type Config struct {
 	URL         string
 	Host        string
@@ -23,6 +24,8 @@ type Config struct {
 	Topic       string
 	Durable     bool
 }
+
+*/
 
 // ReconnectingClient manages a background STOMP connection with auto-resubscribe.
 type ReconnectingClient struct {
@@ -99,19 +102,30 @@ func (rc *ReconnectingClient) loop() {
 			case <-rc.stopped:
 				return
 			default:
-				if rc.conn != nil && rc.conn.Err() != nil {
-					log.Printf("[EMS] STOMP connection error: %v. Will reconnect…", rc.conn.Err())
+				if !rc.isConnected() {
+					break
+				}
+				// Send a lightweight heartbeat message
+				err := rc.Send("/queue/optimusdb-health", "text/plain", []byte("ping"))
+				if err != nil {
+					log.Printf("[EMS] Heartbeat failed, reconnecting: %v", err)
 					rc.closeConn()
 					time.Sleep(rc.retryDelay)
 					break
 				}
-				time.Sleep(1 * time.Second)
 			}
-			if rc.conn == nil {
+			time.Sleep(5 * time.Second)
+			if !rc.isConnected() {
 				break
 			}
 		}
 	}
+}
+
+func (rc *ReconnectingClient) isConnected() bool {
+	rc.mu.RLock()
+	defer rc.mu.RUnlock()
+	return rc.conn != nil
 }
 
 func (rc *ReconnectingClient) closeConn() {
