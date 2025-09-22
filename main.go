@@ -138,13 +138,14 @@ func main() {
 
 	// --- Start EMS subscriber (ActiveMQ/STOMP) ---
 	// Derive a context from your existing termination context so it cancels cleanly.
+	// --- Start EMS subscriber (ActiveMQ/STOMP) ---
 	emsCtx, emsCancel := context.WithCancel(termCtx)
 	cleanupEMS, err := knowledgeBaseDB.StartEMSSubscriber(emsCtx)
 	if err != nil {
+		// This should only happen on config/init errors
+		log.Printf("[ERROR] EMS init failed: %v", err)
 		if app.GlobalLoggerDB != nil {
-			_ = app.GlobalLoggerDB.AddToOptimusLog("ERROR", "EMS start failed: "+err.Error(), runtime.GOOS)
-		} else {
-			log.Printf("[ERROR] EMS start failed: %v", err)
+			_ = app.GlobalLoggerDB.AddToOptimusLog("ERROR", "EMS init failed: "+err.Error(), runtime.GOOS)
 		}
 	} else {
 		// Arrange cleanup on shutdown
@@ -153,10 +154,10 @@ func main() {
 			_ = cleanupEMS()
 			emsCancel()
 		}()
+
+		log.Println("[INFO] EMS service started (auto-reconnect enabled)")
 		if app.GlobalLoggerDB != nil {
-			_ = app.GlobalLoggerDB.AddToOptimusLog("INFO", "EMS subscriber started", runtime.GOOS)
-		} else {
-			log.Println("[INFO] EMS subscriber started")
+			_ = app.GlobalLoggerDB.AddToOptimusLog("INFO", "EMS service started (auto-reconnect enabled)", runtime.GOOS)
 		}
 	}
 

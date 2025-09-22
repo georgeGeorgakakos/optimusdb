@@ -304,3 +304,12 @@ sqlite3 -header -column "$DB" "
   ORDER BY id DESC
   LIMIT 200;
 "'
+
+
+########################################################################################################################
+2447  sudo ./emsInterogateV2.sh --tables
+ 2448  sudo ./emsInterogateV2.sh --count
+ 2449  sudo ./emsInterogateV2.sh --events 100
+ 2450  sudo ./emsInterogateV2.sh -logs 100 --since 60 --level ERROR
+ 2451  sudo ./emsInterogateV2.sh --logs 100 --since 60 --level ERROR
+ 2452  sudo ./emsInterogateV2.sh --sql "SELECT id,received_at,topic,substr(raw_json,1,200) AS raw FROM ems_events ORDER BY id DESC LIMIT 20;"

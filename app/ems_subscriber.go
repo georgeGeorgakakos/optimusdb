@@ -1,10 +1,10 @@
 package app
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
-	"net"
+	"github.com/go-stomp/stomp"
+	"golang.org/x/net/context"
 	"optimusdb/mq"
 	"os"
 	"strconv"
@@ -14,6 +14,7 @@ import (
 
 // StartEMSSubscriber connects to the EMS broker (ActiveMQ STOMP) and subscribes.
 // Returns a cleanup() you should defer on shutdown.
+/*
 func (db *KnowledgeBaseDB) StartEMSSubscriber(ctx context.Context) (cleanup func() error, err error) {
 	// ---- Read config from env (works great in K3s) ----
 	serviceName := getenvDefault("EMS_SERVICE_NAME", "ems-broker") // k8s Service name
@@ -116,6 +117,73 @@ func (db *KnowledgeBaseDB) StartEMSSubscriber(ctx context.Context) (cleanup func
 	}, nil
 }
 
+*/
+// StartEMSSubscriber starts EMS service with auto-reconnect
+func (db *KnowledgeBaseDB) StartEMSSubscriber(ctx context.Context) (cleanup func() error, err error) {
+	host := os.Getenv("EMS_SERVICE_NAME")
+	if host == "" {
+		host = "ems-broker.default.svc.cluster.local"
+	}
+	portStr := os.Getenv("EMS_STOMP_PORT")
+	if portStr == "" {
+		portStr = "61610"
+	}
+	stompPort, _ := strconv.Atoi(portStr)
+
+	user := os.Getenv("MQ_USER")
+	if user == "" {
+		user = "aaa"
+	}
+	pass := os.Getenv("MQ_PASS")
+	if pass == "" {
+		pass = "111"
+	}
+	clientID := os.Getenv("MQ_CLIENT_ID")
+	topic := os.Getenv("EMS_TOPIC")
+	if topic == "" {
+		topic = "/topic/>"
+	}
+
+	cfg := mq.Config{
+		Host:     host,
+		Port:     stompPort,
+		User:     user,
+		Pass:     pass,
+		ClientID: clientID,
+		Topic:    topic,
+	}
+
+	service := mq.NewEMSService(cfg, 10*time.Second)
+	service.OnMessage(func(dest string, msg *stomp.Message) {
+		if msg != nil && msg.Body != nil {
+			_ = db.handleEMSMessage(msg.Body)
+		}
+	})
+	service.OnConnected(func() {
+		if GlobalLoggerDB != nil {
+			_ = GlobalLoggerDB.AddToOptimusLog("INFO",
+				fmt.Sprintf("EMS connected (host=%s port=%d topic=%s)", cfg.Host, cfg.Port, cfg.Topic),
+				"ems")
+		}
+	})
+	service.OnDisconnected(func(err error) {
+		if GlobalLoggerDB != nil {
+			_ = GlobalLoggerDB.AddToOptimusLog("WARN",
+				fmt.Sprintf("EMS disconnected: %v", err),
+				"ems")
+		}
+	})
+
+	db.EMSService = service
+	service.Start()
+
+	return func() error {
+		service.Stop()
+		db.EMSService = nil
+		return nil
+	}, nil
+}
+
 // Persist every message in handleEMSMessage i.e. from EMS topic
 func (db *KnowledgeBaseDB) handleEMSMessage(body []byte) error {
 	now := time.Now().UTC()
@@ -192,4 +260,12 @@ func getenvBoolDefault(k string, def bool) bool {
 	default:
 		return def
 	}
+}
+
+// EMSSend sends a message to EMS (if connected)
+func (db *KnowledgeBaseDB) EMSSend(dest, contentType string, body []byte) error {
+	if db.EMSService == nil {
+		return fmt.Errorf("EMS service not initialized")
+	}
+	return db.EMSService.Send(dest, contentType, body)
 }

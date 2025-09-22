@@ -58,6 +58,9 @@ type KnowledgeBaseDB struct {
 	//For EMS
 	MQEMS  *mq.Client
 	HostID string
+	// for the watchdog service
+	EMSClient  *mq.ReconnectingClient
+	EMSService *mq.EMSService
 }
 
 // /** this is the struct for the SQL
