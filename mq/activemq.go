@@ -1,5 +1,6 @@
 package mq
 
+//Update 22.09.2025
 import (
 	"context"
 	"errors"
