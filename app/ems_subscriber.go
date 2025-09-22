@@ -7,6 +7,7 @@ import (
 	"golang.org/x/net/context"
 	"optimusdb/mq"
 	"os"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -191,8 +192,22 @@ func (db *KnowledgeBaseDB) handleEMSMessage(body []byte) error {
 	clientID := os.Getenv("MQ_CLIENT_ID")
 
 	// Try to parse; we still store raw if parsing fails.
+	//var m EMSMessage
+	//parseErr := json.Unmarshal(body, &m)
+
+	raw := string(body)
 	var m EMSMessage
 	parseErr := json.Unmarshal(body, &m)
+
+	if parseErr != nil {
+		// Try normalization
+		normalized := normalizeEMSMessage(raw)
+		if normalized != "" {
+			if err := json.Unmarshal([]byte(normalized), &m); err == nil {
+				parseErr = nil
+			}
+		}
+	}
 
 	// Persist one row per message (raw + parsed fields)
 	if GlobalLoggerDB != nil {
@@ -268,4 +283,30 @@ func (db *KnowledgeBaseDB) EMSSend(dest, contentType string, body []byte) error 
 		return fmt.Errorf("EMS service not initialized")
 	}
 	return db.EMSService.Send(dest, contentType, body)
+}
+
+// normalizeEMSMessage converts EMS Java-style {key=value,...} into valid JSON
+func normalizeEMSMessage(s string) string {
+	out := ""
+	inQuotes := false
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if c == '"' {
+			inQuotes = !inQuotes
+		}
+		if !inQuotes && c == '=' {
+			out += ":"
+		} else {
+			out += string(c)
+		}
+	}
+
+	// Replace single quotes with double quotes if present
+	out = strings.ReplaceAll(out, "'", "\"")
+
+	// Ensure keys are quoted
+	re := regexp.MustCompile(`([,{]\s*)([A-Za-z0-9_]+)(\s*:)`)
+	out = re.ReplaceAllString(out, `$1"$2"$3`)
+
+	return out
 }
