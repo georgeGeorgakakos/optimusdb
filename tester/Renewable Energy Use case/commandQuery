@@ -1,0 +1,3 @@
+curl -X POST http://localhost:18001/swarmkb/command \
+-H "Content-Type: application/json" \
+-d @query_solar_running.json

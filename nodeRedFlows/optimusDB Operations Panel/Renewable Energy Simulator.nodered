@@ -1,0 +1,1127 @@
+[
+    {
+        "id": "tab-renewables",
+        "type": "tab",
+        "label": "Renewables - Basic OPC UA",
+        "disabled": false,
+        "info": ""
+    },
+    {
+        "id": "opcua-server-basic",
+        "type": "OpcUa-Server",
+        "z": "tab-renewables",
+        "port": "4840",
+        "name": "OPC UA Server (basic)",
+        "endpoint": "UA/PrincipiaBasic",
+        "users": "",
+        "nodesetDir": "",
+        "autoAcceptUnknownCertificate": false,
+        "registerToDiscovery": false,
+        "constructDefaultAddressSpace": true,
+        "allowAnonymous": true,
+        "endpointNone": false,
+        "endpointSign": false,
+        "endpointSignEncrypt": false,
+        "endpointBasic128Rsa15": false,
+        "endpointBasic256": false,
+        "endpointBasic256Sha256": false,
+        "maxNodesPerBrowse": "",
+        "maxNodesPerHistoryReadData": "",
+        "maxNodesPerHistoryReadEvents": "",
+        "maxNodesPerHistoryUpdateData": "",
+        "maxNodesPerRead": "",
+        "maxNodesPerWrite": "",
+        "maxNodesPerMethodCall": "",
+        "maxNodesPerRegisterNodes": "",
+        "maxNodesPerNodeManagement": "",
+        "maxMonitoredItemsPerCall": "",
+        "maxNodesPerHistoryUpdateEvents": "",
+        "maxNodesPerTranslateBrowsePathsToNodeIds": "",
+        "maxConnectionsPerEndpoint": "",
+        "maxMessageSize": "",
+        "maxBufferSize": "",
+        "maxSessions": "",
+        "x": 1810,
+        "y": 240,
+        "wires": [
+            []
+        ]
+    },
+    {
+        "id": "json-to-string",
+        "type": "json",
+        "z": "tab-renewables",
+        "name": "JSON stringify -Athens",
+        "property": "payload",
+        "action": "",
+        "pretty": false,
+        "x": 1150,
+        "y": 40,
+        "wires": [
+            [
+                "bfb18f35b54c258d"
+            ]
+        ]
+    },
+    {
+        "id": "inj-athens",
+        "type": "inject",
+        "z": "tab-renewables",
+        "name": "Athens Solar tick (5s)",
+        "props": [
+            {
+                "p": "payload"
+            }
+        ],
+        "repeat": "5",
+        "once": true,
+        "payloadType": "date",
+        "x": 150,
+        "y": 40,
+        "wires": [
+            [
+                "fn-solar-athens"
+            ]
+        ]
+    },
+    {
+        "id": "fn-solar-athens",
+        "type": "function",
+        "z": "tab-renewables",
+        "name": "Sim Athens Solar",
+        "func": "// ===== 1) SITE + SIMULATION =====\nconst site = { name: \"Athens\", type: \"Solar\", lat: 37.9838, lon: 23.7275 };\n\n\n\n// --- Solar simulation (diurnal pattern + random noise) ---\nconst now = new Date();\nconst local = new Date(now.toLocaleString('en-US', { timeZone: 'Europe/Athens' }));\nconst hour = local.getHours();                      // local time\nconst daylight = Math.max(0, Math.sin((Math.PI * (hour - 6)) / 12)); // ~sunrise 06, sunset 18\nconst basePower = 500 * daylight;                        // 0..500 kW\nconst noise = (Math.random() - 0.5) * 25;                // ±12.5 kW jitter\nconst power = +(Math.max(0, basePower + noise)).toFixed(2);\nconst status = Math.random() < 0.02 ? \"Fault\" : \"Running\";\n\n// --- markers & MQTT payloads (map + OptimusDB) ---\nconst out = {\n  site: site.name,\n  type: site.type,\n  power_kW: power,\n  irradiance_Wm2: +(daylight * 1000).toFixed(1),\n  status,\n  ts: new Date().toISOString(),\n  lat: site.lat,\n  lon: site.lon\n};\n\n// 1) Map marker\nconst mapMsg = {\n  payload: {\n    name: `${site.name} ${site.type}`,\n    lat: site.lat,\n    lon: site.lon,\n    layer: site.type,\n    ttl: 60,\n    icon: \"fa-sun\",\n    iconColor: \"gold\",\n    popup: `${power} kW | ${status}`\n  }\n};\n\n// 2) Dashboard gauge\nconst gaugeMsg = { payload: power };\n\n// 3) MQTT payload to OptimusDB (goes to your JSON stringify → Persist fn)\nconst mqttMsg = { topic: `optimus/opc/${site.name}`, payload: out };\n\n// ===== 2) OPC UA Variable Names =====\nconst varPower  = `${site.name}.${site.type}.PowerkW`;\nconst varStatus = `${site.name}.${site.type}.Status`;\n\n// ===== 3) Ensure Variables Added Once (WRAPPED UNDER payload) =====\nfunction ensureAdded(name, datatype, initVal) {\n  const key = `opc_added_${name}`;\n  if (!context.get(key)) {\n    node.send([\n      null,\n      null,\n      null,\n      { payload: { messageType: 'add', namespace: 1, variableName: name, datatype, variableValue: initVal } },\n      null\n    ]);\n    context.set(key, true);\n  }\n}\nensureAdded(varPower,  'Double', 0);\nensureAdded(varStatus, 'String', 'Unknown');\n\n// ===== 4) OPC UA Value Updates (WRAPPED UNDER payload) =====\nconst opcPower  = { payload: { messageType: 'value', namespace: 1, variableName: varPower,  variableValue: power  } };\nconst opcStatus = { payload: { messageType: 'value', namespace: 1, variableName: varStatus, variableValue: status } };\n\n// ===== 5) Return all 5 outputs =====\n// 1) map/template   2) ui_gauge   3) mqtt/stringify   4) OPC write power   5) OPC write status\nreturn [mapMsg, gaugeMsg, mqttMsg, opcPower, opcStatus];\n",
+        "outputs": 5,
+        "timeout": "",
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 390,
+        "y": 40,
+        "wires": [
+            [
+                "leaflet-template"
+            ],
+            [
+                "ui-gauge-athens"
+            ],
+            [
+                "json-to-string"
+            ],
+            [
+                "b146c3cb1895111b"
+            ],
+            [
+                "b146c3cb1895111b"
+            ]
+        ]
+    },
+    {
+        "id": "ui-gauge-athens",
+        "type": "ui_gauge",
+        "z": "tab-renewables",
+        "name": "Athens Solar kW",
+        "group": "ui-grp-solar",
+        "order": 1,
+        "width": 6,
+        "height": 4,
+        "gtype": "gage",
+        "title": "Athens (Solar) kW",
+        "label": "kW",
+        "format": "{{value}}",
+        "min": 0,
+        "max": "600",
+        "colors": [
+            "#00b500",
+            "#e6e600",
+            "#ca3838"
+        ],
+        "seg1": "",
+        "seg2": "",
+        "diff": false,
+        "className": "",
+        "x": 750,
+        "y": 60,
+        "wires": []
+    },
+    {
+        "id": "inj-zak",
+        "type": "inject",
+        "z": "tab-renewables",
+        "name": "Zakynthos Solar tick (5s)",
+        "props": [
+            {
+                "p": "payload"
+            }
+        ],
+        "repeat": "5",
+        "once": true,
+        "x": 140,
+        "y": 120,
+        "wires": [
+            [
+                "fn-solar-zak"
+            ]
+        ]
+    },
+    {
+        "id": "fn-solar-zak",
+        "type": "function",
+        "z": "tab-renewables",
+        "name": "Sim Zakynthos Solar",
+        "func": "// ===== 1) SITE + SIMULATION =====\n// --- Solar Sites ---\n//const site = { name: \"Athens\", type: \"Solar\", lat: 37.9838, lon: 23.7275 };\nconst site = { name: \"Zakynthos\", type: \"Solar\", lat: 37.7870, lon: 20.8999 };\n// ===== 1) SITE + SIMULATION =====\n\n\n// --- Solar simulation (diurnal pattern + random noise) ---\nconst now = new Date();\nconst local = new Date(now.toLocaleString('en-US', { timeZone: 'Europe/Athens' }));\nconst hour = local.getHours();                      // local time\nconst daylight = Math.max(0, Math.sin((Math.PI * (hour - 6)) / 12)); // ~sunrise 06, sunset 18\nconst basePower = 500 * daylight;                        // 0..500 kW\nconst noise = (Math.random() - 0.5) * 25;                // ±12.5 kW jitter\nconst power = +(Math.max(0, basePower + noise)).toFixed(2);\nconst status = Math.random() < 0.02 ? \"Fault\" : \"Running\";\n\n// --- markers & MQTT payloads (map + OptimusDB) ---\nconst out = {\n  site: site.name,\n  type: site.type,\n  power_kW: power,\n  irradiance_Wm2: +(daylight * 1000).toFixed(1),\n  status,\n  ts: new Date().toISOString(),\n  lat: site.lat,\n  lon: site.lon\n};\n\n// 1) Map marker\nconst mapMsg = {\n  payload: {\n    name: `${site.name} ${site.type}`,\n    lat: site.lat,\n    lon: site.lon,\n    layer: site.type,\n    ttl: 60,\n    icon: \"fa-sun\",\n    iconColor: \"gold\",\n    popup: `${power} kW | ${status}`\n  }\n};\n\n// 2) Dashboard gauge\nconst gaugeMsg = { payload: power };\n\n// 3) MQTT payload to OptimusDB (goes to your JSON stringify → Persist fn)\nconst mqttMsg = { topic: `optimus/opc/${site.name}`, payload: out };\n\n// ===== 2) OPC UA Variable Names =====\nconst varPower  = `${site.name}.${site.type}.PowerkW`;\nconst varStatus = `${site.name}.${site.type}.Status`;\n\n// ===== 3) Ensure Variables Added Once (WRAPPED UNDER payload) =====\nfunction ensureAdded(name, datatype, initVal) {\n  const key = `opc_added_${name}`;\n  if (!context.get(key)) {\n    node.send([\n      null,\n      null,\n      null,\n      { payload: { messageType: 'add', namespace: 1, variableName: name, datatype, variableValue: initVal } },\n      null\n    ]);\n    context.set(key, true);\n  }\n}\nensureAdded(varPower,  'Double', 0);\nensureAdded(varStatus, 'String', 'Unknown');\n\n// ===== 4) OPC UA Value Updates (WRAPPED UNDER payload) =====\nconst opcPower  = { payload: { messageType: 'value', namespace: 1, variableName: varPower,  variableValue: power  } };\nconst opcStatus = { payload: { messageType: 'value', namespace: 1, variableName: varStatus, variableValue: status } };\n\n// ===== 5) Return all 5 outputs =====\n// 1) map/template   2) ui_gauge   3) mqtt/stringify   4) OPC write power   5) OPC write status\nreturn [mapMsg, gaugeMsg, mqttMsg, opcPower, opcStatus];\n",
+        "outputs": 5,
+        "timeout": "",
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 400,
+        "y": 120,
+        "wires": [
+            [
+                "leaflet-template"
+            ],
+            [
+                "ui-gauge-zak"
+            ],
+            [
+                "eb55ce7f8a4335f1"
+            ],
+            [
+                "b146c3cb1895111b"
+            ],
+            [
+                "b146c3cb1895111b"
+            ]
+        ]
+    },
+    {
+        "id": "ui-gauge-zak",
+        "type": "ui_gauge",
+        "z": "tab-renewables",
+        "name": "Zakynthos Solar kW",
+        "group": "ui-grp-solar",
+        "order": 2,
+        "width": 6,
+        "height": 4,
+        "gtype": "gage",
+        "title": "Zakynthos (Solar) kW",
+        "label": "kW",
+        "format": "{{value}}",
+        "min": 0,
+        "max": "600",
+        "x": 760,
+        "y": 120,
+        "wires": []
+    },
+    {
+        "id": "inj-lamia",
+        "type": "inject",
+        "z": "tab-renewables",
+        "name": "Lamia Solar tick (5s)",
+        "props": [
+            {
+                "p": "payload"
+            }
+        ],
+        "repeat": "5",
+        "once": true,
+        "x": 150,
+        "y": 200,
+        "wires": [
+            [
+                "fn-solar-lamia"
+            ]
+        ]
+    },
+    {
+        "id": "fn-solar-lamia",
+        "type": "function",
+        "z": "tab-renewables",
+        "name": "Sim Lamia Solar",
+        "func": "// ===== 1) SITE + SIMULATION =====\n// --- Solar Sites ---\n// const site = { name: \"Athens\", type: \"Solar\", lat: 37.9838, lon: 23.7275 };\n// const site = { name: \"Zakynthos\", type: \"Solar\", lat: 37.7870, lon: 20.8999 };\n\n// ===== 1) SITE + SIMULATION =====\nconst site = { name: \"Lamia\", type: \"Solar\", lat: 38.9000, lon: 22.4333 };\n\n// --- Solar simulation (diurnal pattern + random noise) ---\nconst now = new Date();\nconst local = new Date(now.toLocaleString('en-US', { timeZone: 'Europe/Athens' }));\nconst hour = local.getHours();                      // local time                     // local time\nconst daylight = Math.max(0, Math.sin((Math.PI * (hour - 6)) / 12)); // ~sunrise 06, sunset 18\nconst basePower = 500 * daylight;                        // 0..500 kW\nconst noise = (Math.random() - 0.5) * 25;                // ±12.5 kW jitter\nconst power = +(Math.max(0, basePower + noise)).toFixed(2);\nconst status = Math.random() < 0.02 ? \"Fault\" : \"Running\";\n\n// --- markers & MQTT payloads (map + OptimusDB) ---\nconst out = {\n  site: site.name,\n  type: site.type,\n  power_kW: power,\n  irradiance_Wm2: +(daylight * 1000).toFixed(1),\n  status,\n  ts: new Date().toISOString(),\n  lat: site.lat,\n  lon: site.lon\n};\n\n// 1) Map marker\nconst mapMsg = {\n  payload: {\n    name: `${site.name} ${site.type}`,\n    lat: site.lat,\n    lon: site.lon,\n    layer: site.type,\n    ttl: 60,\n    icon: \"fa-sun\",\n    iconColor: \"gold\",\n    popup: `${power} kW | ${status}`\n  }\n};\n\n// 2) Dashboard gauge\nconst gaugeMsg = { payload: power };\n\n// 3) MQTT payload to OptimusDB (goes to your JSON stringify → Persist fn)\nconst mqttMsg = { topic: `optimus/opc/${site.name}`, payload: out };\n\n// ===== 2) OPC UA Variable Names =====\nconst varPower  = `${site.name}.${site.type}.PowerkW`;\nconst varStatus = `${site.name}.${site.type}.Status`;\n\n// ===== 3) Ensure Variables Added Once (WRAPPED UNDER payload) =====\nfunction ensureAdded(name, datatype, initVal) {\n  const key = `opc_added_${name}`;\n  if (!context.get(key)) {\n    node.send([\n      null,\n      null,\n      null,\n      { payload: { messageType: 'add', namespace: 1, variableName: name, datatype, variableValue: initVal } },\n      null\n    ]);\n    context.set(key, true);\n  }\n}\nensureAdded(varPower,  'Double', 0);\nensureAdded(varStatus, 'String', 'Unknown');\n\n// ===== 4) OPC UA Value Updates (WRAPPED UNDER payload) =====\nconst opcPower  = { payload: { messageType: 'value', namespace: 1, variableName: varPower,  variableValue: power  } };\nconst opcStatus = { payload: { messageType: 'value', namespace: 1, variableName: varStatus, variableValue: status } };\n\n// ===== 5) Return all 5 outputs =====\n// 1) map/template   2) ui_gauge   3) mqtt/stringify   4) OPC write power   5) OPC write status\nreturn [mapMsg, gaugeMsg, mqttMsg, opcPower, opcStatus];\n",
+        "outputs": 5,
+        "timeout": "",
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 400,
+        "y": 200,
+        "wires": [
+            [
+                "leaflet-template"
+            ],
+            [
+                "ui-gauge-lamia"
+            ],
+            [
+                "bd3dc9bb30e2a5b4"
+            ],
+            [],
+            []
+        ]
+    },
+    {
+        "id": "ui-gauge-lamia",
+        "type": "ui_gauge",
+        "z": "tab-renewables",
+        "name": "Lamia Solar kW",
+        "group": "ui-grp-solar",
+        "order": 3,
+        "width": 6,
+        "height": 4,
+        "gtype": "gage",
+        "title": "Lamia (Solar) kW",
+        "label": "kW",
+        "format": "{{value}}",
+        "min": 0,
+        "max": "600",
+        "x": 760,
+        "y": 180,
+        "wires": []
+    },
+    {
+        "id": "inj-kom",
+        "type": "inject",
+        "z": "tab-renewables",
+        "name": "Komotini Wind tick (5s)",
+        "props": [
+            {
+                "p": "payload"
+            }
+        ],
+        "repeat": "5",
+        "once": true,
+        "x": 150,
+        "y": 280,
+        "wires": [
+            [
+                "fn-wind-kom"
+            ]
+        ]
+    },
+    {
+        "id": "fn-wind-kom",
+        "type": "function",
+        "z": "tab-renewables",
+        "name": "Sim Komotini Wind",
+        "func": "// ===== 1) SITE + SIMULATION =====\n// --- Wind Sites ---\n const site = { name: \"Komotini\", type: \"Wind\", lat: 41.1170, lon: 25.4044 };\n\n// --- Wind simulation (with cut-in / rated / cut-out) ---\nconst cutIn = 3;         // m/s\nconst rated = 12;        // m/s\nconst cutOut = 25;       // m/s\nconst capacityKW = 1500; // nameplate\n\n// base wind + small gusts\nlet windSpeed = 5 + Math.random() * 10;              // ~5–15 m/s\nwindSpeed += (Math.random() - 0.5) * 1.2;            // gust ±0.6\nwindSpeed = Math.max(0, +windSpeed.toFixed(2));\n\n// piecewise power curve\nlet p = 0;\nif (windSpeed < cutIn) {\n  p = 0;\n} else if (windSpeed < rated) {\n  const norm = (windSpeed - cutIn) / (rated - cutIn);\n  p = capacityKW * Math.pow(norm, 3);               // cubic rise to rated\n} else if (windSpeed <= cutOut) {\n  p = capacityKW;                                   // flat at rated\n} else {\n  p = 0;                                            // safety shutdown\n}\nconst status = Math.random() < 0.03 ? \"Fault\" : \"Running\";\nconst power = +((status === \"Fault\" ? 0 : p)).toFixed(2);\n\n// --- Markers & MQTT payloads (for map + OptimusDB) ---\nconst out = {\n  site: site.name,\n  type: site.type,\n  power_kW: power,\n  wind_mps: +windSpeed.toFixed(1),\n  status,\n  ts: new Date().toISOString(),\n  lat: site.lat,\n  lon: site.lon\n};\n\n// 1) Map marker\nconst mapMsg = {\n  payload: {\n    name: `${site.name} ${site.type}`,\n    lat: site.lat,\n    lon: site.lon,\n    layer: site.type,\n    ttl: 60,\n    icon: \"fa-wind\",\n    iconColor: \"deepskyblue\",\n    popup: `${power} kW | ${status}`\n  }\n};\n\n// 2) Dashboard gauge\nconst gaugeMsg = { payload: power };\n\n// 3) MQTT payload to OptimusDB (your downstream “JSON stringify – <site>” → Persist fn)\nconst mqttMsg = { topic: `optimus/opc/${site.name}`, payload: out };\n\n// ===== 2) OPC UA Variable Names =====\nconst varPower = `${site.name}.${site.type}.PowerkW`;\nconst varWind = `${site.name}.${site.type}.WindSpeed`;\nconst varStatus = `${site.name}.${site.type}.Status`;\n\n// ===== 3) Ensure Variables Added Once (WRAPPED UNDER payload) =====\nfunction ensureAdded(name, datatype, initVal) {\n  const key = `opc_added_${name}`;\n  if (!context.get(key)) {\n    node.send([\n      null, null, null,\n      { payload: { messageType: 'add', namespace: 1, variableName: name, datatype, variableValue: initVal } },\n      null\n    ]);\n    context.set(key, true);\n  }\n}\nensureAdded(varPower, 'Double', 0);\nensureAdded(varWind, 'Double', 0);\nensureAdded(varStatus, 'String', 'Unknown');\n\n// ===== 4) OPC UA Value Updates (WRAPPED UNDER payload) =====\nconst opcPower = { payload: { messageType: 'value', namespace: 1, variableName: varPower, variableValue: power } };\nconst opcWind = { payload: { messageType: 'value', namespace: 1, variableName: varWind, variableValue: windSpeed } };\nconst opcStatus = { payload: { messageType: 'value', namespace: 1, variableName: varStatus, variableValue: status } };\n\n// ===== 5) Return all 5 outputs =====\n// 1) map/template   2) ui_gauge   3) mqtt/stringify   4) OPC write power   5) OPC write status\nreturn [mapMsg, gaugeMsg, mqttMsg, opcPower, opcStatus];\n\n",
+        "outputs": 5,
+        "timeout": "",
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 410,
+        "y": 280,
+        "wires": [
+            [
+                "leaflet-template"
+            ],
+            [
+                "ui-gauge-kom"
+            ],
+            [
+                "3ede76b59485d6b1"
+            ],
+            [],
+            []
+        ]
+    },
+    {
+        "id": "ui-gauge-kom",
+        "type": "ui_gauge",
+        "z": "tab-renewables",
+        "name": "Komotini Wind kW",
+        "group": "ui-grp-wind",
+        "order": 1,
+        "width": 6,
+        "height": 4,
+        "gtype": "gage",
+        "title": "Komotini (Wind) kW",
+        "label": "kW",
+        "format": "{{value}}",
+        "min": 0,
+        "max": "1500",
+        "x": 760,
+        "y": 260,
+        "wires": []
+    },
+    {
+        "id": "inj-kav",
+        "type": "inject",
+        "z": "tab-renewables",
+        "name": "Kavala Wind tick (5s)",
+        "props": [
+            {
+                "p": "payload"
+            }
+        ],
+        "repeat": "5",
+        "once": true,
+        "x": 150,
+        "y": 360,
+        "wires": [
+            [
+                "fn-wind-kav"
+            ]
+        ]
+    },
+    {
+        "id": "fn-wind-kav",
+        "type": "function",
+        "z": "tab-renewables",
+        "name": "Sim Kavala Wind",
+        "func": "// ===== 1) SITE + SIMULATION =====\n const site = { name: \"Kavala\", type: \"Wind\", lat: 40.9396, lon: 24.4069 };\n\n\n// --- Wind simulation (with cut-in / rated / cut-out) ---\nconst cutIn = 3;         // m/s\nconst rated = 12;        // m/s\nconst cutOut = 25;       // m/s\nconst capacityKW = 1500; // nameplate\n\n// base wind + small gusts\nlet windSpeed = 5 + Math.random() * 10;              // ~5–15 m/s\nwindSpeed += (Math.random() - 0.5) * 1.2;            // gust ±0.6\nwindSpeed = Math.max(0, +windSpeed.toFixed(2));\n\n// piecewise power curve\nlet p = 0;\nif (windSpeed < cutIn) {\n  p = 0;\n} else if (windSpeed < rated) {\n  const norm = (windSpeed - cutIn) / (rated - cutIn);\n  p = capacityKW * Math.pow(norm, 3);               // cubic rise to rated\n} else if (windSpeed <= cutOut) {\n  p = capacityKW;                                   // flat at rated\n} else {\n  p = 0;                                            // safety shutdown\n}\nconst status = Math.random() < 0.03 ? \"Fault\" : \"Running\";\nconst power = +((status === \"Fault\" ? 0 : p)).toFixed(2);\n\n// --- Markers & MQTT payloads (for map + OptimusDB) ---\nconst out = {\n  site: site.name,\n  type: site.type,\n  power_kW: power,\n  wind_mps: +windSpeed.toFixed(1),\n  status,\n  ts: new Date().toISOString(),\n  lat: site.lat,\n  lon: site.lon\n};\n\n// 1) Map marker\nconst mapMsg = {\n  payload: {\n    name: `${site.name} ${site.type}`,\n    lat: site.lat,\n    lon: site.lon,\n    layer: site.type,\n    ttl: 60,\n    icon: \"fa-wind\",\n    iconColor: \"deepskyblue\",\n    popup: `${power} kW | ${status}`\n  }\n};\n\n// 2) Dashboard gauge\nconst gaugeMsg = { payload: power };\n\n// 3) MQTT payload to OptimusDB (your downstream “JSON stringify – <site>” → Persist fn)\nconst mqttMsg = { topic: `optimus/opc/${site.name}`, payload: out };\n\n// ===== 2) OPC UA Variable Names =====\nconst varPower = `${site.name}.${site.type}.PowerkW`;\nconst varWind = `${site.name}.${site.type}.WindSpeed`;\nconst varStatus = `${site.name}.${site.type}.Status`;\n\n// ===== 3) Ensure Variables Added Once (WRAPPED UNDER payload) =====\nfunction ensureAdded(name, datatype, initVal) {\n  const key = `opc_added_${name}`;\n  if (!context.get(key)) {\n    node.send([\n      null, null, null,\n      { payload: { messageType: 'add', namespace: 1, variableName: name, datatype, variableValue: initVal } },\n      null\n    ]);\n    context.set(key, true);\n  }\n}\nensureAdded(varPower, 'Double', 0);\nensureAdded(varWind, 'Double', 0);\nensureAdded(varStatus, 'String', 'Unknown');\n\n// ===== 4) OPC UA Value Updates (WRAPPED UNDER payload) =====\nconst opcPower = { payload: { messageType: 'value', namespace: 1, variableName: varPower, variableValue: power } };\nconst opcWind = { payload: { messageType: 'value', namespace: 1, variableName: varWind, variableValue: windSpeed } };\nconst opcStatus = { payload: { messageType: 'value', namespace: 1, variableName: varStatus, variableValue: status } };\n\n// ===== 5) Return all 5 outputs =====\n// 1) map/template   2) ui_gauge   3) mqtt/stringify   4) OPC write power   5) OPC write status\nreturn [mapMsg, gaugeMsg, mqttMsg, opcPower, opcStatus];\n",
+        "outputs": 5,
+        "timeout": "",
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 410,
+        "y": 360,
+        "wires": [
+            [
+                "leaflet-template"
+            ],
+            [
+                "ui-gauge-kav"
+            ],
+            [
+                "6caa693a5c0a9eb3"
+            ],
+            [],
+            []
+        ]
+    },
+    {
+        "id": "ui-gauge-kav",
+        "type": "ui_gauge",
+        "z": "tab-renewables",
+        "name": "Kavala Wind kW",
+        "group": "ui-grp-wind",
+        "order": 2,
+        "width": 6,
+        "height": 4,
+        "gtype": "gage",
+        "title": "Kavala (Wind) kW",
+        "label": "kW",
+        "format": "{{value}}",
+        "min": 0,
+        "max": "1500",
+        "x": 760,
+        "y": 320,
+        "wires": []
+    },
+    {
+        "id": "inj-naf",
+        "type": "inject",
+        "z": "tab-renewables",
+        "name": "Nafplio Wind tick (5s)",
+        "props": [
+            {
+                "p": "payload"
+            }
+        ],
+        "repeat": "5",
+        "once": true,
+        "x": 150,
+        "y": 460,
+        "wires": [
+            [
+                "fn-wind-naf"
+            ]
+        ]
+    },
+    {
+        "id": "fn-wind-naf",
+        "type": "function",
+        "z": "tab-renewables",
+        "name": "Sim Nafplio Wind",
+        "func": "// ===== 1) SITE + SIMULATION =====\n const site = { name: \"Nafplio\", type: \"Wind\", lat: 37.5674, lon: 22.8014 };\n\n// --- Wind simulation (with cut-in / rated / cut-out) ---\nconst cutIn = 3;         // m/s\nconst rated = 12;        // m/s\nconst cutOut = 25;       // m/s\nconst capacityKW = 1500; // nameplate\n\n// base wind + small gusts\nlet windSpeed = 5 + Math.random() * 10;              // ~5–15 m/s\nwindSpeed += (Math.random() - 0.5) * 1.2;            // gust ±0.6\nwindSpeed = Math.max(0, +windSpeed.toFixed(2));\n\n// piecewise power curve\nlet p = 0;\nif (windSpeed < cutIn) {\n  p = 0;\n} else if (windSpeed < rated) {\n  const norm = (windSpeed - cutIn) / (rated - cutIn);\n  p = capacityKW * Math.pow(norm, 3);               // cubic rise to rated\n} else if (windSpeed <= cutOut) {\n  p = capacityKW;                                   // flat at rated\n} else {\n  p = 0;                                            // safety shutdown\n}\nconst status = Math.random() < 0.03 ? \"Fault\" : \"Running\";\nconst power = +((status === \"Fault\" ? 0 : p)).toFixed(2);\n\n// --- Markers & MQTT payloads (for map + OptimusDB) ---\nconst out = {\n  site: site.name,\n  type: site.type,\n  power_kW: power,\n  wind_mps: +windSpeed.toFixed(1),\n  status,\n  ts: new Date().toISOString(),\n  lat: site.lat,\n  lon: site.lon\n};\n\n// 1) Map marker\nconst mapMsg = {\n  payload: {\n    name: `${site.name} ${site.type}`,\n    lat: site.lat,\n    lon: site.lon,\n    layer: site.type,\n    ttl: 60,\n    icon: \"fa-wind\",\n    iconColor: \"deepskyblue\",\n    popup: `${power} kW | ${status}`\n  }\n};\n\n// 2) Dashboard gauge\nconst gaugeMsg = { payload: power };\n\n// 3) MQTT payload to OptimusDB (your downstream “JSON stringify – <site>” → Persist fn)\nconst mqttMsg = { topic: `optimus/opc/${site.name}`, payload: out };\n\n// ===== 2) OPC UA Variable Names =====\nconst varPower = `${site.name}.${site.type}.PowerkW`;\nconst varWind = `${site.name}.${site.type}.WindSpeed`;\nconst varStatus = `${site.name}.${site.type}.Status`;\n\n// ===== 3) Ensure Variables Added Once (WRAPPED UNDER payload) =====\nfunction ensureAdded(name, datatype, initVal) {\n  const key = `opc_added_${name}`;\n  if (!context.get(key)) {\n    node.send([\n      null, null, null,\n      { payload: { messageType: 'add', namespace: 1, variableName: name, datatype, variableValue: initVal } },\n      null\n    ]);\n    context.set(key, true);\n  }\n}\nensureAdded(varPower, 'Double', 0);\nensureAdded(varWind, 'Double', 0);\nensureAdded(varStatus, 'String', 'Unknown');\n\n// ===== 4) OPC UA Value Updates (WRAPPED UNDER payload) =====\nconst opcPower = { payload: { messageType: 'value', namespace: 1, variableName: varPower, variableValue: power } };\nconst opcWind = { payload: { messageType: 'value', namespace: 1, variableName: varWind, variableValue: windSpeed } };\nconst opcStatus = { payload: { messageType: 'value', namespace: 1, variableName: varStatus, variableValue: status } };\n\n// ===== 5) Return all 5 outputs =====\n// 1) map/template   2) ui_gauge   3) mqtt/stringify   4) OPC write power   5) OPC write status\nreturn [mapMsg, gaugeMsg, mqttMsg, opcPower, opcStatus];\n",
+        "outputs": 5,
+        "timeout": "",
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 410,
+        "y": 460,
+        "wires": [
+            [
+                "leaflet-template"
+            ],
+            [
+                "ui-gauge-naf"
+            ],
+            [
+                "a071a4e02f0efdc4"
+            ],
+            [],
+            []
+        ]
+    },
+    {
+        "id": "ui-gauge-naf",
+        "type": "ui_gauge",
+        "z": "tab-renewables",
+        "name": "Nafplio Wind kW",
+        "group": "ui-grp-wind",
+        "order": 3,
+        "width": 6,
+        "height": 4,
+        "gtype": "gage",
+        "title": "Nafplio (Wind) kW",
+        "label": "kW",
+        "format": "{{value}}",
+        "min": 0,
+        "max": "1500",
+        "x": 760,
+        "y": 380,
+        "wires": []
+    },
+    {
+        "id": "inj-ioan",
+        "type": "inject",
+        "z": "tab-renewables",
+        "name": "Ioannina Hydro tick (5s)",
+        "props": [
+            {
+                "p": "payload"
+            }
+        ],
+        "repeat": "5",
+        "once": true,
+        "x": 150,
+        "y": 580,
+        "wires": [
+            [
+                "fn-hydro-ioan"
+            ]
+        ]
+    },
+    {
+        "id": "fn-hydro-ioan",
+        "type": "function",
+        "z": "tab-renewables",
+        "name": "Sim Ioannina Hydro",
+        "func": "// ===== 1) SITE + SIMULATION =====\nconst site = { name: \"Ioannina\", type: \"Hydro\", lat: 39.6650, lon: 20.8500 };\n\n// --- Hydro simulation (flow, head, efficiency) ---\nconst hour = new Date().getHours();\nconst daily = 0.6 + 0.4 * Math.sin((Math.PI * (hour - 6)) / 12); // mild diurnal\nconst baseFlow = 120;                           // m³/s baseline\nconst flowCMS = Math.max(40, baseFlow * daily + (Math.random() * 20 - 10)); // 40–~160 m³/s\nconst headM = 45 + (Math.random() * 6 - 3);   // 42–48 m head\nconst eta = 0.88 + (Math.random() * 0.04);  // 0.88–0.92 efficiency\n\n// Power P(kW) = ρ g Q H η / 1000  with ρ=1000 kg/m³, g=9.81 m/s²\nconst power = +((1000 * 9.81 * flowCMS * headM * eta) / 1000).toFixed(0);\nconst status = Math.random() < 0.02 ? \"Fault\" : \"Running\";\n\n// --- Markers & MQTT payloads (for map + OptimusDB) ---\nconst out = {\n  site: site.name,\n  type: site.type,\n  power_kW: power,\n  flow_cms: +flowCMS.toFixed(1),\n  head_m: +headM.toFixed(1),\n  efficiency: +eta.toFixed(2),\n  status,\n  ts: new Date().toISOString(),\n  lat: site.lat,\n  lon: site.lon\n};\n\n// 1) Map marker\nconst mapMsg = {\n  payload: {\n    name: `${site.name} ${site.type}`,\n    lat: site.lat,\n    lon: site.lon,\n    layer: site.type,\n    ttl: 60,\n    icon: \"fa-tint\",\n    iconColor: \"royalblue\",\n    popup: `${power} kW | ${status}`\n  }\n};\n\n// 2) Dashboard gauge\nconst gaugeMsg = { payload: power };\n\n// 3) MQTT payload to OptimusDB\nconst mqttMsg = { topic: `optimus/opc/${site.name}`, payload: out };\n\n// ===== 2) OPC UA Variable Names =====\nconst varPower = `${site.name}.${site.type}.PowerkW`;\nconst varFlow = `${site.name}.${site.type}.FlowCMS`;\nconst varHead = `${site.name}.${site.type}.HeadM`;\nconst varStatus = `${site.name}.${site.type}.Status`;\n\n// ===== 3) Ensure Variables Added Once (wrap under payload!) =====\nfunction ensureAdded(name, datatype, initVal) {\n  const key = `opc_added_${name}`;\n  if (!context.get(key)) {\n    node.send([\n      null, null, null,\n      { payload: { messageType: 'add', namespace: 1, variableName: name, datatype, variableValue: initVal } },\n      null\n    ]);\n    context.set(key, true);\n  }\n}\nensureAdded(varPower, 'Double', 0);\nensureAdded(varFlow, 'Double', 0);\nensureAdded(varHead, 'Double', 0);\nensureAdded(varStatus, 'String', 'Unknown');\n\n// ===== 4) OPC UA Value Updates (wrap under payload!) =====\nconst opcPower = { payload: { messageType: 'value', namespace: 1, variableName: varPower, variableValue: power } };\nconst opcFlow = { payload: { messageType: 'value', namespace: 1, variableName: varFlow, variableValue: +flowCMS.toFixed(2) } };\nconst opcHead = { payload: { messageType: 'value', namespace: 1, variableName: varHead, variableValue: +headM.toFixed(2) } };\nconst opcStatus = { payload: { messageType: 'value', namespace: 1, variableName: varStatus, variableValue: status } };\n\n// ===== 5) Return outputs =====\n// 1) map/template   2) ui_gauge   3) mqtt/stringify   4) OPC write (power)   5) OPC write (status)\n// If your OPC server has only 2 inputs, send the extra vars (flow/head) via additional wires or a Join node.\n// For now we push Power on #4 and Status on #5. Add Flow/Head by duplicating wires if you have more inputs.\nreturn [mapMsg, gaugeMsg, mqttMsg, opcPower, opcStatus];\n",
+        "outputs": 5,
+        "timeout": "",
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 410,
+        "y": 580,
+        "wires": [
+            [
+                "leaflet-template"
+            ],
+            [
+                "ui-gauge-ioan"
+            ],
+            [
+                "f3121ffe4a327fa3"
+            ],
+            [],
+            []
+        ]
+    },
+    {
+        "id": "ui-gauge-ioan",
+        "type": "ui_gauge",
+        "z": "tab-renewables",
+        "name": "Ioannina Hydro kW",
+        "group": "ui-grp-hydro",
+        "order": 1,
+        "width": 6,
+        "height": 4,
+        "gtype": "gage",
+        "title": "Ioannina (Hydro) kW",
+        "label": "kW",
+        "format": "{{value}}",
+        "min": 0,
+        "max": "50000",
+        "x": 750,
+        "y": 560,
+        "wires": []
+    },
+    {
+        "id": "inj-kal",
+        "type": "inject",
+        "z": "tab-renewables",
+        "name": "Kalamata Hydro tick (5s)",
+        "props": [
+            {
+                "p": "payload"
+            }
+        ],
+        "repeat": "5",
+        "crontab": "",
+        "once": true,
+        "onceDelay": "",
+        "topic": "",
+        "payload": "",
+        "payloadType": "str",
+        "x": 130,
+        "y": 680,
+        "wires": [
+            [
+                "fn-hydro-kal"
+            ]
+        ]
+    },
+    {
+        "id": "fn-hydro-kal",
+        "type": "function",
+        "z": "tab-renewables",
+        "name": "Sim Kalamata Hydro",
+        "func": " const site = { name: \"Kalamata\", type: \"Hydro\", lat: 37.0389, lon: 22.1142 };\n\n\n// --- Hydro simulation (flow, head, efficiency) ---\nconst hour = new Date().getHours();\nconst daily = 0.6 + 0.4 * Math.sin((Math.PI * (hour - 6)) / 12); // mild diurnal\nconst baseFlow = 120;                           // m³/s baseline\nconst flowCMS = Math.max(40, baseFlow * daily + (Math.random() * 20 - 10)); // 40–~160 m³/s\nconst headM   = 45 + (Math.random() * 6 - 3);   // 42–48 m head\nconst eta     = 0.88 + (Math.random() * 0.04);  // 0.88–0.92 efficiency\n\n// Power P(kW) = ρ g Q H η / 1000  with ρ=1000 kg/m³, g=9.81 m/s²\nconst power = +((1000 * 9.81 * flowCMS * headM * eta) / 1000).toFixed(0);\nconst status = Math.random() < 0.02 ? \"Fault\" : \"Running\";\n\n// --- Markers & MQTT payloads (for map + OptimusDB) ---\nconst out = {\n  site: site.name,\n  type: site.type,\n  power_kW: power,\n  flow_cms: +flowCMS.toFixed(1),\n  head_m: +headM.toFixed(1),\n  efficiency: +eta.toFixed(2),\n  status,\n  ts: new Date().toISOString(),\n  lat: site.lat,\n  lon: site.lon\n};\n\n// 1) Map marker\nconst mapMsg = {\n  payload: {\n    name: `${site.name} ${site.type}`,\n    lat: site.lat,\n    lon: site.lon,\n    layer: site.type,\n    ttl: 60,\n    icon: \"fa-tint\",\n    iconColor: \"royalblue\",\n    popup: `${power} kW | ${status}`\n  }\n};\n\n// 2) Dashboard gauge\nconst gaugeMsg = { payload: power };\n\n// 3) MQTT payload to OptimusDB\nconst mqttMsg = { topic: `optimus/opc/${site.name}`, payload: out };\n\n// ===== 2) OPC UA Variable Names =====\nconst varPower  = `${site.name}.${site.type}.PowerkW`;\nconst varFlow   = `${site.name}.${site.type}.FlowCMS`;\nconst varHead   = `${site.name}.${site.type}.HeadM`;\nconst varStatus = `${site.name}.${site.type}.Status`;\n\n// ===== 3) Ensure Variables Added Once (wrap under payload!) =====\nfunction ensureAdded(name, datatype, initVal) {\n  const key = `opc_added_${name}`;\n  if (!context.get(key)) {\n    node.send([\n      null, null, null,\n      { payload: { messageType: 'add', namespace: 1, variableName: name, datatype, variableValue: initVal } },\n      null\n    ]);\n    context.set(key, true);\n  }\n}\nensureAdded(varPower,  'Double', 0);\nensureAdded(varFlow,   'Double', 0);\nensureAdded(varHead,   'Double', 0);\nensureAdded(varStatus, 'String', 'Unknown');\n\n// ===== 4) OPC UA Value Updates (wrap under payload!) =====\nconst opcPower  = { payload: { messageType: 'value', namespace: 1, variableName: varPower,  variableValue: power } };\nconst opcFlow   = { payload: { messageType: 'value', namespace: 1, variableName: varFlow,   variableValue: +flowCMS.toFixed(2) } };\nconst opcHead   = { payload: { messageType: 'value', namespace: 1, variableName: varHead,   variableValue: +headM.toFixed(2) } };\nconst opcStatus = { payload: { messageType: 'value', namespace: 1, variableName: varStatus, variableValue: status } };\n\n// ===== 5) Return outputs =====\n// 1) map/template   2) ui_gauge   3) mqtt/stringify   4) OPC write (power)   5) OPC write (status)\n// If your OPC server has only 2 inputs, send the extra vars (flow/head) via additional wires or a Join node.\n// For now we push Power on #4 and Status on #5. Add Flow/Head by duplicating wires if you have more inputs.\nreturn [mapMsg, gaugeMsg, mqttMsg, opcPower, opcStatus];\n",
+        "outputs": 5,
+        "timeout": "",
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 400,
+        "y": 680,
+        "wires": [
+            [
+                "leaflet-template"
+            ],
+            [
+                "ui-gauge-kal"
+            ],
+            [
+                "54f955ef04f65528"
+            ],
+            [],
+            []
+        ]
+    },
+    {
+        "id": "ui-gauge-kal",
+        "type": "ui_gauge",
+        "z": "tab-renewables",
+        "name": "Kalamata Hydro kW",
+        "group": "ui-grp-hydro",
+        "order": 2,
+        "width": 6,
+        "height": 4,
+        "gtype": "gage",
+        "title": "Kalamata (Hydro) kW",
+        "label": "kW",
+        "format": "{{value}}",
+        "min": 0,
+        "max": "40000",
+        "x": 740,
+        "y": 660,
+        "wires": []
+    },
+    {
+        "id": "leaflet-template",
+        "type": "ui_template",
+        "z": "tab-renewables",
+        "group": "ui-grp-map",
+        "name": "Leaflet Greece",
+        "order": 1,
+        "width": "24",
+        "height": "18",
+        "format": "<link rel=\"stylesheet\" href=\"https://unpkg.com/leaflet@1.9.4/dist/leaflet.css\" />\n<div id=\"gr-map\" style=\"width:100%; height:100%; position:relative; overflow:hidden;\"></div>\n<script src=\"https://unpkg.com/leaflet@1.9.4/dist/leaflet.js\"></script>\n\n<style>\n  /* KPI cards */\n  .kpi-wrap {\n    display: grid;\n    grid-template-columns: repeat(4, auto);\n    gap: 8px;\n  }\n\n  .kpi-card {\n    background: rgba(255, 255, 255, 0.96);\n    border: 1px solid #e5e5e5;\n    border-radius: 8px;\n    padding: 8px 10px;\n    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.2);\n    font: 13px Arial;\n    min-width: 130px;\n  }\n\n  .kpi-title {\n    font-size: 11px;\n    color: #666;\n    margin-bottom: 4px;\n  }\n\n  .kpi-value {\n    font-size: 18px;\n    font-weight: bold;\n  }\n\n  /* Playback controls */\n  .playback {\n    background: rgba(255, 255, 255, 0.96);\n    border: 1px solid #e5e5e5;\n    border-radius: 8px;\n    padding: 6px 10px;\n    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.2);\n    font: 12px Arial;\n    display: flex;\n    align-items: center;\n    gap: 8px;\n  }\n\n  .playback input[type=range] {\n    width: 220px;\n  }\n\n  /* Animated dash lines */\n  .blink-dash {\n    stroke-dasharray: 4 4;\n    stroke-linecap: round;\n    animation: dashmove 1.2s linear infinite;\n  }\n\n  .blink-hq {\n    stroke-dasharray: 3 6;\n    stroke-linecap: round;\n    animation: dashmove 1.6s linear infinite;\n  }\n\n  @keyframes dashmove {\n    to {\n      stroke-dashoffset: -20;\n    }\n  }\n</style>\n<style>\n  #gr-map {\n    min-height: 420px;\n  }\n</style>\n<script>\n  (function(scope){\n  // --- State ---\n  let map, layers = {}, markers = {}, infoBoxes = {}, meshLines = [];\n  const baseColors = { Solar:'gold', Wind:'deepskyblue', Hydro:'royalblue' };\n  const HQ = { name: \"Operations HQ\", lat: 37.9755, lon: 23.7348 };\n\n  // Timeline buffer (last N frames), each frame = shallow snapshot of siteData\n  const MAX_FRAMES = 300;         // ~ last 5 minutes if you push ~1 fps\n  let frames = [];                // [{ts, sites: {key:siteData, ...}}]\n  let playback = { active:false, idx:0, timer:null };\n\n  function ensureLeaflet(cb){ if (window.L) return cb(); setTimeout(()=>ensureLeaflet(cb),100); }\n  function normType(t){ if(!t) return \"\"; t=String(t).trim().toLowerCase();\n    if(t.startsWith(\"sol\")||t===\"pv\") return \"Solar\";\n    if(t.startsWith(\"win\")) return \"Wind\";\n    if(t.startsWith(\"hyd\")) return \"Hydro\";\n    return \"\";\n  }\n  function statusColor(type, s){ if(s==='Fault') return 'red'; if(s==='Maintenance') return 'orange'; return baseColors[type]||'gray'; }\n  function clearMesh(){ meshLines.forEach(l=>map.removeLayer(l)); meshLines=[]; }\n  \n  // --- helpers (put near top of your script)\n\tfunction debounce(fn, wait){ let t; return (...a)=>{ clearTimeout(t); t=setTimeout(()=>fn.apply(null,a), wait); }; }\n\n\t// call this whenever the map might be hidden/shown or the panel resized\n\tfunction invalidateSoon(delay=120){\n\t  if(!map) return;\n\t  setTimeout(()=>{ try{ map.invalidateSize(false); }catch(e){} }, delay);\n\t}\n\n\n  // --- Init ---\n  function init(){\n    if (map) return;\n    const el = document.getElementById('gr-map'); if (!el) return;\n\n    map = L.map('gr-map', { zoomControl:true, scrollWheelZoom:false }).setView([39.0742,21.8243],7);\n    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:18,attribution:'© OpenStreetMap'}).addTo(map);\n\n // Invalidate on browser resize\n  window.addEventListener('resize', debounce(()=> invalidateSoon(0), 150));\n\n  // Invalidate when the widget becomes visible (tab switch / reflow)\n  if ('IntersectionObserver' in window){\n    const io = new IntersectionObserver(entries=>{\n      if(entries[0] && entries[0].isIntersecting) invalidateSoon(80);\n    }, {root:null, threshold:0.01});\n    io.observe(el);\n    map.__io = io; // keep ref for cleanup\n  }\n    // Safety watchdog every 10s (covers odd reflows)\n  map.__tick = setInterval(()=> invalidateSoon(0), 10000);\n    // Layer groups\n    layers.Solar=L.layerGroup().addTo(map);\n    layers.Wind =L.layerGroup().addTo(map);\n    layers.Hydro=L.layerGroup().addTo(map);\n    layers.HQ   =L.layerGroup().addTo(map);\n\n    // HQ marker\n    const hqIcon=L.divIcon({className:'hq-icon',\n      html:\"<div style='background:black;color:white;width:26px;height:26px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:14px;'>🏢</div>\",\n      iconSize:[26,26], iconAnchor:[13,13]});\n    L.marker([HQ.lat,HQ.lon],{icon:hqIcon}).addTo(layers.HQ).bindPopup(HQ.name);\n\n    // Legend\n    const legend = L.control({ position:'bottomright' });\n    legend.onAdd = function(){\n      const div = L.DomUtil.create('div','info legend');\n      div.innerHTML =\n        \"<div style='background:white;color:black;padding:6px 8px;border-radius:6px;line-height:1.3;box-shadow:0 2px 6px rgba(0,0,0,0.25);font-size:12px;font-family:Arial,sans-serif;'>\" +\n        \"<b>Legend</b><br/>\" +\n        \"<span style='color:gold;'>&#9679;</span> Solar<br/>\" +\n        \"<span style='color:deepskyblue;'>&#9679;</span> Wind<br/>\" +\n        \"<span style='color:royalblue;'>&#9679;</span> Hydro<br/>\" +\n        \"<span style='color:black;'>&#9632;</span> Headquarters<br/>\" +\n        \"<span style='color:#3f51b5;'>&#9679;</span> 🌐 OptimusDB agent<br/>\" +\n        \"<span style='color:#333;'>&#8212;&#8212;</span> Mesh (type-colored) · · ·\" +\n        \"</div>\";\n      return div;\n    };\n    legend.addTo(map);\n\n    // KPI cards (top-left)\n    const kpiCtl = L.control({position:'topleft'});\n    kpiCtl.onAdd = function(){\n      const d = L.DomUtil.create('div','kpis');\n      d.innerHTML =\n        \"<div class='kpi-wrap'>\" +\n          \"<div class='kpi-card'><div class='kpi-title'>Total Power</div><div id='kpi-pwr' class='kpi-value'>0 kW</div></div>\" +\n          \"<div class='kpi-card'><div class='kpi-title'>Running</div><div id='kpi-run' class='kpi-value'>0</div></div>\" +\n          \"<div class='kpi-card'><div class='kpi-title'>Faults</div><div id='kpi-flt' class='kpi-value' style='color:#b00020'>0</div></div>\" +\n          \"<div class='kpi-card'><div class='kpi-title'>Avg Wind</div><div id='kpi-wnd' class='kpi-value'>0 m/s</div></div>\" +\n        \"</div>\";\n      return d;\n    };\n    kpiCtl.addTo(map);\n\n    // Timeline slider (top-center)\n    const pbCtl = L.control({position:'topright'});\n    pbCtl.onAdd = function(){\n      const d = L.DomUtil.create('div','playback');\n      d.innerHTML =\n        \"<div class='playback'>\" +\n          \"<button id='pb-btn'>▶</button>\" +\n          \"<input id='pb-range' type='range' min='0' max='0' step='1' value='0'/>\" +\n          \"<span id='pb-label'>Live</span>\" +\n        \"</div>\";\n      return d;\n    };\n    pbCtl.addTo(map);\n\n    setTimeout(()=>{\n      const btn=document.getElementById('pb-btn');\n      const rng=document.getElementById('pb-range');\n      const lab=document.getElementById('pb-label');\n\n      function setLiveMode(live){\n        playback.active = !live && playback.active; // keep state if already playing in history\n        if (live){\n          rng.value = rng.max;\n          lab.textContent = 'Live';\n          renderFrame(-1); // render current markers\n        } else {\n          lab.textContent = 'T-' + (rng.max - rng.value) + ' steps';\n          renderFrame(parseInt(rng.value,10));\n        }\n      }\n\n      btn.onclick = function(){\n        // toggle play/pause in history\n        if (playback.timer) { clearInterval(playback.timer); playback.timer=null; btn.textContent='▶'; return; }\n        btn.textContent='⏸';\n        playback.timer = setInterval(()=>{\n          if (parseInt(rng.value,10) < parseInt(rng.max,10)) rng.value = parseInt(rng.value,10) + 1;\n          else rng.value = 0;\n          lab.textContent = 'T-' + (rng.max - rng.value) + ' steps';\n          renderFrame(parseInt(rng.value,10));\n        }, 700);\n      };\n      rng.oninput = function(){ setLiveMode(false); };\n      rng.onchange = function(){ setLiveMode(false); };\n    }, 350);\n\n    setTimeout(()=> map.invalidateSize(), 300);\n  }\n\n  // --- Mesh (animated) ---\n  function drawMesh(){\n    clearMesh();\n    const sites = Object.values(markers);\n    if (sites.length < 1) return;\n\n    for (let i=0;i<sites.length;i++){\n      for (let j=i+1;j<sites.length;j++){\n        const a=sites[i], b=sites[j];\n        const t=a.siteType || '';\n        const color=baseColors[t] || 'gray';\n        const line=L.polyline([a.getLatLng(), b.getLatLng()], {\n          color, weight:1.6, opacity:0.95, dashArray:'4,4', className:'blink-dash', interactive:false\n        }).addTo(map);\n        meshLines.push(line);\n      }\n    }\n    sites.forEach(s=>{\n      meshLines.push(L.polyline([s.getLatLng(), [HQ.lat,HQ.lon]], {\n        color:'black', weight:1.8, opacity:0.95, dashArray:'3,6', className:'blink-hq', interactive:false\n      }).addTo(map));\n    });\n  }\n\n  // --- KPIs + Summary emitter ---\n  function refreshKPIsAndEmit(){\n    const siteData = Object.values(markers).map(m=>m.siteData).filter(Boolean);\n    const total = siteData.reduce((s,p)=>s+(+p.power_kW||0),0);\n    const run   = siteData.filter(p=>p.status==='Running').length;\n    const faults= siteData.filter(p=>p.status==='Fault').length;\n    const winds = siteData.filter(p=>normType(p.type)==='Wind');\n    const avgW  = winds.reduce((a,p)=>a+(+p.wind_mps||0),0)/(winds.length||1);\n\n    const P=document.getElementById('kpi-pwr');\n    const R=document.getElementById('kpi-run');\n    const F=document.getElementById('kpi-flt');\n    const W=document.getElementById('kpi-wnd');\n    if(P) P.textContent = total.toFixed(0)+\" kW\";\n    if(R) R.textContent = run;\n    if(F) F.textContent = faults;\n    if(W) W.textContent = avgW.toFixed(1)+\" m/s\";\n\n    // 👉 Emit summary to the flow (for donut chart, etc.)\n    const mix = siteData.reduce((acc,p)=>{ const t=normType(p.type); acc[t]=(acc[t]||0)+(+p.power_kW||0); return acc; },{});\n    scope.send({ topic:\"summary\", payload:{ total, running:run, faults, avgWind:avgW, mix, ts:Date.now() }});\n  }\n\n  // --- Snapshotting ---\n  function captureFrame(){\n    // Build a snapshot of current sites\n    const snapshot = {};\n    Object.keys(markers).forEach(k=>{\n      if(markers[k].siteData) snapshot[k] = {...markers[k].siteData};\n    });\n    frames.push({ ts:Date.now(), sites:snapshot });\n    if(frames.length > MAX_FRAMES) frames.shift();\n\n    // update slider range\n    const rng=document.getElementById('pb-range');\n    const lab=document.getElementById('pb-label');\n    if(rng){\n      rng.max = String(frames.length-1);\n      if(!playback.timer && (rng.value===rng.max || rng.value===\"0\")) {\n        rng.value = rng.max; if(lab) lab.textContent=\"Live\";\n      }\n    }\n  }\n\n  function renderFrame(idx){\n    // idx == -1 => render live (current markers)\n    // else render snapshot idx\n    // Simple approach: clear all markers and redraw sites from frame (or show current)\n    Object.keys(markers).forEach(k=>{\n      const m = markers[k];\n      if (map.hasLayer(m)) map.removeLayer(m);\n      if (m.dbMarker && map.hasLayer(m.dbMarker)) map.removeLayer(m.dbMarker);\n      if (infoBoxes[k] && map.hasLayer(infoBoxes[k])) map.removeLayer(infoBoxes[k]);\n    });\n    markers = {}; infoBoxes = {};\n    clearMesh();\n\n    let sitesToRender = null;\n    if(idx>=0 && frames[idx]) sitesToRender = frames[idx].sites;\n    else {\n      // fallback: build a pseudo snapshot from current (siteData)\n      sitesToRender = {};\n      Object.keys(markers).forEach(k=>{ if(markers[k].siteData) sitesToRender[k] = {...markers[k].siteData}; });\n    }\n    if(!sitesToRender) return;\n\n    // Re-add all sites in snapshot\n    Object.values(sitesToRender).forEach(p=> addOrUpdateSite(p, /*skipCapture*/ true));\n    drawMesh();\n  }\n\n  // --- Sites ---\n  function addOrUpdateSite(p, skipCapture){\n    if(!p || p.lat==null || p.lon==null) return;\n\n    const key   = p.site || p.name || (p.lat + ',' + p.lon);\n    const type  = normType(p.type || p.layer || \"\");\n    const typeColor = baseColors[type] || 'gray';\n\n    const pos   = [Number(p.lat), Number(p.lon)];\n    const lg    = layers[type] || map;\n\n    const opts  = { radius: 8, color: typeColor, fillColor: typeColor, fillOpacity: 0.9, weight: 2 };\n    const popup = (p.site||p.name) + \": \" + (p.power_kW||0) + \" kW | \" + (p.status||'Unknown');\n\n    const creating = !markers[key];\n    if (creating) {\n      markers[key] = L.circleMarker(pos, opts).addTo(lg).bindPopup(popup);\n      // Click → emit OptimusDB query request upward\n      markers[key].on('click', () => {\n        scope.send({ topic:\"optimus/query\", payload: { site:(p.site||p.name||key), type, lat:p.lat, lon:p.lon }});\n      });\n    } else {\n      markers[key].setLatLng(pos).setStyle(opts).bindPopup(popup);\n    }\n    markers[key].siteType = type;\n    markers[key].siteData = { ...p, type }; // normalized copy\n\n    // OptimusDB agent icon\n    const dbIcon = L.divIcon({\n      html:\"<div style='color:#3f51b5;font-size:18px;transform:translate(14px,-8px);'>🌐</div>\",\n      className:'db-icon', iconSize:[16,16]\n    });\n    if(!markers[key].dbMarker){\n      markers[key].dbMarker = L.marker(pos, { icon: dbIcon, interactive:false }).addTo(lg);\n    } else {\n      markers[key].dbMarker.setLatLng(pos);\n    }\n\n    // Info rectangle\n    const statCol = statusColor(type, p.status);\n    const infoHtml =\n      \"<div style='background:white;border:1px solid #ccc;border-radius:6px;padding:4px 6px;font-size:11px;box-shadow:0 2px 6px rgba(0,0,0,0.2);'>\" +\n      \"<b>\"+(p.site||p.name)+\"</b><br/>\"+type+\" | \"+(p.power_kW||0)+\" kW<br/>\"+\n      \"<span style='color:\"+statCol+\";'>\"+(p.status||\"Unknown\")+\"</span></div>\";\n    if (!infoBoxes[key]) {\n      infoBoxes[key] = L.popup({ autoClose:false, closeOnClick:false, closeButton:false, offset:[0,-30] })\n                        .setLatLng(pos).setContent(infoHtml).addTo(map);\n    } else {\n      infoBoxes[key].setLatLng(pos).setContent(infoHtml);\n    }\n\n    if(!skipCapture) {\n      captureFrame();\n      refreshKPIsAndEmit();\n      drawMesh();\n    }\n  }\n\n  function fitAll(){\n    const pts=[]; Object.values(markers).forEach(m=>{ if(map.hasLayer(m)) pts.push(m.getLatLng()); });\n    pts.push(L.latLng(HQ.lat,HQ.lon));\n    if(pts.length) map.fitBounds(L.latLngBounds(pts).pad(0.15));\n  }\n\n  // --- Input binding ---\n  scope.$watch('msg', function(msg){\n    ensureLeaflet(()=>{\n      init();\n      if(!msg || !msg.payload) return;\n\n      // Accept summary or control messages, but mainly site updates\n      const p = msg.payload;\n\n      // HQ override skip\n      if (p.type === 'HQ' || p.layer === 'HQ' || p.isHQ === true) return;\n\n      if (p.lat == null || p.lon == null) return;\n      p.lat = Number(p.lat); p.lon = Number(p.lon);\n      addOrUpdateSite(p);\n      fitAll();\n    });\n  });\n})(scope);\n</script>",
+        "storeOutMessages": true,
+        "fwdInMessages": true,
+        "resendOnRefresh": false,
+        "templateScope": "local",
+        "className": "",
+        "x": 1200,
+        "y": 520,
+        "wires": [
+            [
+                "ab7eb3a1808f5dfe",
+                "579a6f80a002ff00",
+                "fn-mock-forecast",
+                "fn-mock-ts-A",
+                "fn-mock-ts-K",
+                "fn-mock-eff"
+            ]
+        ]
+    },
+    {
+        "id": "ab7eb3a1808f5dfe",
+        "type": "ui_template",
+        "z": "tab-renewables",
+        "group": "ui-grp-map",
+        "name": "",
+        "order": 1,
+        "width": 0,
+        "height": 0,
+        "format": "<div style=\"width:100%;height:100%;display:flex;align-items:center;justify-content:center;\">\n    <canvas id=\"mixDonut\" style=\"max-width:420px;max-height:260px;\"></canvas>\n</div>\n<script src=\"https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js\"></script>\n<script>\n    (function(scope){\n  let chart;\n  const labels = [\"Solar\",\"Wind\",\"Hydro\"];\n\n  function dataFromMix(mix){\n    return labels.map(l => +(mix && mix[l] || 0));\n  }\n\n  function initChart(ctx){\n    chart = new Chart(ctx, {\n      type: 'doughnut',\n      data: {\n        labels,\n        datasets: [{\n          data: [0,0,0],\n          backgroundColor: ['gold','deepskyblue','royalblue'],\n          borderColor: ['#d1b400','#0aa0d6','#294aa8'],\n          borderWidth: 1\n        }]\n      },\n      options: {\n        responsive: true, maintainAspectRatio: false,\n        plugins: {\n          legend: { position: 'bottom' },\n          tooltip: { enabled: true }\n        },\n        cutout: '55%'  // donut thickness\n      }\n    });\n  }\n\n  // Optional center label (total kW)\n  function setCenterLabel(total){\n    if(!chart) return;\n    // Simple plugin to draw text in the middle\n    const txt = (total != null) ? Math.round(total) + \" kW\" : \"\";\n    Chart.register({\n      id: 'centerText',\n      afterDraw(c, args, opts){\n        const {ctx, chartArea:{width, height}} = c;\n        ctx.save();\n        ctx.font = '600 16px Arial';\n        ctx.fillStyle = '#333';\n        ctx.textAlign = 'center';\n        ctx.textBaseline = 'middle';\n        ctx.fillText(txt, width/2, height/2);\n        ctx.restore();\n      }\n    });\n  }\n\n  scope.$watch('msg', function(msg){\n    if(!msg) return;\n    if(msg.topic !== 'summary') return;\n\n    const canvas = document.getElementById('mixDonut');\n    if(!canvas) return;\n\n    if(!chart) initChart(canvas.getContext('2d'));\n\n    const mix = msg.payload && msg.payload.mix;\n    const total = msg.payload && msg.payload.total;\n\n    chart.data.datasets[0].data = dataFromMix(mix);\n    setCenterLabel(total);\n    chart.update('none');\n  });\n})(scope);\n</script>",
+        "storeOutMessages": true,
+        "fwdInMessages": true,
+        "resendOnRefresh": true,
+        "templateScope": "local",
+        "className": "",
+        "x": 1600,
+        "y": 420,
+        "wires": [
+            []
+        ]
+    },
+    {
+        "id": "579a6f80a002ff00",
+        "type": "ui_template",
+        "z": "tab-renewables",
+        "group": "ui-grp-map",
+        "name": "",
+        "order": 1,
+        "width": 0,
+        "height": 0,
+        "format": "<style>\n  .q-wrap {\n    background: #fff;\n    border: 1px solid #e5e5e5;\n    border-radius: 8px;\n    box-shadow: 0 2px 6px rgba(0, 0, 0, .15);\n    padding: 10px;\n    font: 13px Arial\n  }\n\n  .q-row {\n    display: flex;\n    gap: 8px;\n    align-items: center;\n    margin: 6px 0\n  }\n\n  .q-row input[type=text] {\n    flex: 1;\n    padding: 6px 8px;\n    border: 1px solid #ccc;\n    border-radius: 6px\n  }\n\n  .q-btn {\n    padding: 6px 10px;\n    border: 1px solid #ccc;\n    border-radius: 6px;\n    background: #fafafa;\n    cursor: pointer\n  }\n\n  .q-btn:hover {\n    background: #f0f0f0\n  }\n\n  .q-badge {\n    background: #eef;\n    border: 1px solid #ccd;\n    border-radius: 6px;\n    padding: 2px 6px\n  }\n\n  .q-out {\n    background: #111;\n    color: #9ef;\n    border-radius: 8px;\n    padding: 8px;\n    height: 260px;\n    overflow: auto;\n    white-space: pre-wrap;\n    font: 12px/1.35 monospace\n  }\n\n  .q-small {\n    color: #666;\n    font-size: 12px\n  }\n\n  .spin {\n    width: 14px;\n    height: 14px;\n    border: 2px solid #9ef;\n    border-top-color: transparent;\n    border-radius: 50%;\n    display: inline-block;\n    animation: sp 0.9s linear infinite\n  }\n\n  @keyframes sp {\n    to {\n      transform: rotate(360deg)\n    }\n  }\n</style>\n\n<div class=\"q-wrap\">\n  <div class=\"q-row\">\n    <b>OptimusDB Query</b>\n    <span id=\"q-status\" class=\"q-small\" style=\"margin-left:auto;\"></span>\n  </div>\n\n  <div class=\"q-row\">\n    <label>Site</label>\n    <input id=\"q-site\" type=\"text\" placeholder=\"Click a site on the map or type name…\" />\n    <span id=\"q-type\" class=\"q-badge\" title=\"site type\">–</span>\n  </div>\n\n  <div class=\"q-row\">\n    <button id=\"btn-latest\" class=\"q-btn\">Latest</button>\n    <button id=\"btn-24h\" class=\"q-btn\">Last 24h</button>\n    <span class=\"q-small\">Custom (hours):</span>\n    <input id=\"q-hours\" type=\"number\" min=\"1\" max=\"720\" value=\"6\" style=\"width:70px;padding:4px 6px;border:1px solid #ccc;border-radius:6px\">\n    <button id=\"btn-custom\" class=\"q-btn\">Run</button>\n  </div>\n\n  <div class=\"q-row\" style=\"justify-content:space-between\">\n    <span class=\"q-small\">Request topic: <code>optimus/query</code></span>\n    <span id=\"q-wait\" class=\"q-small\" style=\"display:none\"><span class=\"spin\"></span> waiting…</span>\n  </div>\n\n  <div id=\"q-out\" class=\"q-out\"><em>Click a site on the map to auto-fill, then run a query.</em></div>\n</div>\n\n<script>\n  (function(scope){\n  let current = { site:\"\", type:\"\", lat:null, lon:null };\n  let waitingTimer = null;\n\n  function setWaiting(on){\n    const w = document.getElementById('q-wait');\n    const s = document.getElementById('q-status');\n    if(!w||!s) return;\n    if(on){ w.style.display='inline-block'; s.textContent=''; }\n    else { w.style.display='none'; }\n  }\n\n  function setSite(p){\n    current = Object.assign({}, current, p||{});\n    const i = document.getElementById('q-site');\n    const t = document.getElementById('q-type');\n    if(i) i.value = current.site || '';\n    if(t) t.textContent = current.type || '–';\n  }\n\n  function print(obj){\n    const out = document.getElementById('q-out'); if(!out) return;\n    out.textContent = (typeof obj === 'string') ? obj : JSON.stringify(obj, null, 2);\n    out.scrollTop = out.scrollHeight;\n  }\n\n  function sendRequest(op, hours){\n    const site = (document.getElementById('q-site')||{}).value || current.site || '';\n    if(!site) { print(\"Select a site first.\"); return; }\n\n    const payload = { op, site };\n    if(op==='range' && hours) payload.hours = Number(hours);\n\n    // emit to flow: you'll wire this to MQTT out (topic: optimus/query)\n    setWaiting(true);\n    scope.send({ topic:\"optimus/query\", payload });\n\n    // safety timeout (e.g., no reply)\n    clearTimeout(waitingTimer);\n    waitingTimer = setTimeout(()=>{ setWaiting(false); /* keep status empty */ }, 8000);\n  }\n\n  // UI events\n  setTimeout(()=>{\n    const latest = document.getElementById('btn-latest');\n    const h24    = document.getElementById('btn-24h');\n    const custom = document.getElementById('btn-custom');\n    const hours  = document.getElementById('q-hours');\n\n    if(latest) latest.onclick = ()=> sendRequest('latest');\n    if(h24)    h24.onclick    = ()=> sendRequest('range', 24);\n    if(custom) custom.onclick = ()=> sendRequest('range', (hours && hours.value)||6);\n  }, 300);\n\n  // Handle inbound messages\n  scope.$watch('msg', function(msg){\n    if(!msg) return;\n\n    // 1) Map click → fills Site\n    if(msg.topic === 'optimus/query' && msg.payload){\n      setSite(msg.payload);\n      return;\n    }\n\n    // 2) OptimusDB reply → render\n    if(msg.topic && msg.topic.startsWith('optimus/reply')){\n      setWaiting(false);\n      const s = document.getElementById('q-status');\n      if(s) s.textContent = 'Reply: ' + (new Date()).toLocaleTimeString();\n      print(msg.payload || \"(empty)\");\n      return;\n    }\n\n    // 3) Direct site override\n    if(msg.topic === 'site/set') setSite(msg.payload);\n  });\n})(scope);\n</script>",
+        "storeOutMessages": true,
+        "fwdInMessages": true,
+        "resendOnRefresh": true,
+        "templateScope": "local",
+        "className": "",
+        "x": 1600,
+        "y": 480,
+        "wires": [
+            []
+        ]
+    },
+    {
+        "id": "tpl-forecast",
+        "type": "ui_template",
+        "z": "tab-renewables",
+        "group": "ui-grp-analytics",
+        "name": "Forecast Curve (Actual vs Forecast)",
+        "order": 1,
+        "width": "24",
+        "height": "9",
+        "format": "<div style=\"width:100%;height:100%;padding:8px;box-sizing:border-box\">\n  <canvas id=\"fcChart\" style=\"width:100%;height:100%\"></canvas>\n</div>\n\n<!-- Chart.js core + annotation plugin -->\n<script src=\"https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js\"></script>\n<script src=\"https://cdn.jsdelivr.net/npm/chartjs-plugin-annotation@3.1.0/dist/chartjs-plugin-annotation.min.js\">\n</script>\n\n<script>\n  (function(scope){\n  let chart, siteName = \"\";\n\n  function init(ctx){\n    Chart.register(window['chartjs-plugin-annotation']);   // ✅ register annotation plugin\n\n    chart = new Chart(ctx, {\n      type: 'line',\n      data: {\n        labels: [],\n        datasets: [\n          {\n            label: 'Actual Power (kW)',\n            data: [],\n            borderColor: '#2196f3',               // bright blue\n            backgroundColor: 'rgba(33,150,243,0.08)',\n            tension: 0.35,\n            borderWidth: 2.8,\n            pointRadius: 0,\n            fill: true\n          },\n          {\n            label: 'Forecast Power (kW)',\n            data: [],\n            borderColor: '#ff9800',               // orange\n            backgroundColor: 'rgba(255,152,0,0.05)',\n            borderDash: [6,4],\n            tension: 0.35,\n            borderWidth: 2.5,\n            pointRadius: 0,\n            fill: true\n          }\n        ]\n      },\n      options: {\n        responsive: true,\n        maintainAspectRatio: false,\n        animation: false,\n        layout: { padding: { top: 30, bottom: 10, left: 10, right: 10 } },\n        scales: {\n          x: {\n            title: { display: true, text: 'Time (hh:mm)', color: '#444', font: { size: 12, weight: 'bold' } },\n            ticks: { maxTicksLimit: 8, color: '#555' },\n            grid: { display: false }\n          },\n          y: {\n            title: { display: true, text: 'Power (kW)', color: '#444', font: { size: 12, weight: 'bold' } },\n            ticks: { color: '#555' },\n            grid: { color: 'rgba(0,0,0,0.08)' }\n          }\n        },\n        plugins: {\n          legend: {\n            position: 'bottom',\n            labels: { color: '#333', usePointStyle: true, pointStyle: 'line', boxWidth: 24 }\n          },\n          title: {\n            display: true,\n            text: 'Forecast vs Actual Power',\n            color: '#111',\n            font: { size: 16, weight: 'bold' },\n            padding: { bottom: 6 }\n          },\n          subtitle: {\n            display: true,\n            text: 'Awaiting data...',\n            color: '#666',\n            font: { size: 12 },\n            padding: { bottom: 10 }\n          },\n          annotation: { annotations: {} },\n          tooltip: {\n            mode: 'index',\n            intersect: false,\n            backgroundColor: 'rgba(0,0,0,0.75)',\n            titleColor: '#fff',\n            bodyColor: '#fff',\n            borderColor: '#ccc',\n            borderWidth: 1\n          }\n        },\n        interaction: { mode: 'nearest', axis: 'x', intersect: false }\n      }\n    });\n  }\n\n  function update(data){\n    const labels   = data.points.map(p => new Date(p.ts).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'}));\n    const actual    = data.points.map(p => +p.actual || 0);\n    const forecast  = data.points.map(p => +p.forecast || 0);\n\n    chart.data.labels = labels;\n    chart.data.datasets[0].data = actual;\n    chart.data.datasets[1].data = forecast;\n\n    // Compute latest stats\n    const latestActual    = actual.at(-1) || 0;\n    const latestForecast  = forecast.at(-1) || 0;\n    const delta           = latestActual - latestForecast;\n    const deltaPct        = latestForecast ? ((delta / latestForecast) * 100).toFixed(1) : 0;\n    const site            = data.site || siteName || 'All Sites';\n    const lastTs          = data.points.at(-1)?.ts || new Date().toISOString();\n\n    // Update titles\n    chart.options.plugins.title.text = `Forecast vs Actual – ${site}`;\n    chart.options.plugins.subtitle.text =\n      `Now: ${latestActual.toFixed(1)} kW (Δ ${delta >= 0 ? '+' : ''}${delta.toFixed(1)} kW / ${deltaPct}% vs forecast) • Updated: ${new Date(lastTs).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'})}`;\n\n    // Add annotation for latest point\n    chart.options.plugins.annotation.annotations = {\n      latestLine: {\n        type: 'line',\n        xMin: labels.length - 1,\n        xMax: labels.length - 1,\n        borderColor: '#777',\n        borderWidth: 1,\n        borderDash: [4,4]\n      },\n      actualPoint: {\n        type: 'point',\n        xValue: labels.length - 1,\n        yValue: latestActual,\n        backgroundColor: '#2196f3',\n        radius: 5\n      },\n      forecastPoint: {\n        type: 'point',\n        xValue: labels.length - 1,\n        yValue: latestForecast,\n        backgroundColor: '#ff9800',\n        radius: 5\n      }\n    };\n\n    chart.update('none');\n  }\n\n  scope.$watch('msg', function(msg){\n    if (!msg || msg.topic !== 'forecast' || !msg.payload) return;\n    const canvas = document.getElementById('fcChart');\n    if (!canvas) return;\n    if (!chart) init(canvas.getContext('2d'));\n    siteName = msg.payload.site || siteName;\n    update(msg.payload);\n  });\n})(scope);\n</script>",
+        "storeOutMessages": false,
+        "fwdInMessages": false,
+        "resendOnRefresh": true,
+        "templateScope": "local",
+        "className": "",
+        "x": 1820,
+        "y": 660,
+        "wires": [
+            []
+        ]
+    },
+    {
+        "id": "fn-mock-forecast",
+        "type": "function",
+        "z": "tab-renewables",
+        "name": "Build forecast payload",
+        "func": "const site = 'Athens';\nconst now = Date.now();\nconst points = Array.from({length:24}, (_,i)=>{\n  const ts = new Date(now - (23-i)*3600*1000).toISOString();\n  const base = 400 + 80*Math.sin(i/24*Math.PI*2);\n  const forecast = Math.max(0, base + (Math.random()*20-10));\n  const actual = Math.max(0, forecast + (Math.random()*30-15));\n  return { ts, actual: +actual.toFixed(0), forecast: +forecast.toFixed(0) };\n});\nmsg.topic = 'forecast';\nmsg.payload = { site, points };\nreturn msg;",
+        "outputs": 1,
+        "timeout": "",
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 1500,
+        "y": 660,
+        "wires": [
+            [
+                "tpl-forecast"
+            ]
+        ]
+    },
+    {
+        "id": "tpl-spark",
+        "type": "ui_template",
+        "z": "tab-renewables",
+        "group": "ui-grp-analytics",
+        "name": "Anomaly Sparklines (per-site)",
+        "order": 2,
+        "width": "24",
+        "height": "10",
+        "format": "<div id=\"spark-wrap\" style=\"display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;padding:8px;box-sizing:border-box;\"></div>\n<script src=\"https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js\"></script>\n<script>\n(function(scope){\n  const charts = {}; // site -> { chart }\n  function zscore(values){\n    const n=values.length; if(!n) return values.map(()=>0);\n    const mean = values.reduce((a,b)=>a+b,0)/n;\n    const std  = Math.sqrt(values.reduce((s,v)=>s+Math.pow(v-mean,2),0)/n) || 1;\n    return values.map(v=>(v-mean)/std);\n  }\n  function createCard(site){\n    const wrap=document.getElementById('spark-wrap');\n    const card=document.createElement('div');\n    card.style.cssText=\"background:#fff;border:1px solid #e5e5e5;border-radius:8px;box-shadow:0 2px 6px rgba(0,0,0,.1);padding:8px;\";\n    card.innerHTML = `<div style=\"font:13px Arial;margin-bottom:4px\"><b>${site}</b></div>\n                      <canvas style=\"width:100%;height:120px\"></canvas>`;\n    wrap.appendChild(card);\n    const ctx=card.querySelector('canvas').getContext('2d');\n    const chart=new Chart(ctx,{\n      type:'line',\n      data:{ labels:[], datasets:[\n        { label:'kW', data:[], borderWidth:1.5, pointRadius:0, tension:0.2 },\n        { label:'Anomaly', data:[], borderWidth:0, pointRadius:3.5, showLine:false }\n      ]},\n      options:{\n        responsive:true, maintainAspectRatio:false, animation:false,\n        plugins:{ legend:{ display:false } },\n        scales:{ x:{ display:false }, y:{ display:false } }\n      }\n    });\n    charts[site]={ chart };\n  }\n  function update(site, series){\n    if(!charts[site]) createCard(site);\n    const c=charts[site].chart;\n    const labels=series.map(p=>new Date(p.ts).toLocaleTimeString());\n    const values=series.map(p=>+p.value||0);\n    const zs=zscore(values);\n    const anom = series.map((p,i)=> Math.abs(zs[i])>2.5 ? values[i] : null);\n    c.data.labels = labels;\n    c.data.datasets[0].data = values;\n    c.data.datasets[1].data = anom;\n    c.data.datasets[1].pointBackgroundColor = anom.map(v=> v==null ? 'rgba(0,0,0,0)' : '#b00020');\n    c.update('none');\n  }\n  scope.$watch('msg', function(msg){\n    if(!msg || msg.topic!=='timeseries' || !msg.payload) return;\n    const site = msg.payload.site || 'Unknown';\n    const series = msg.payload.series || [];\n    update(site, series);\n  });\n})(scope);\n</script>",
+        "storeOutMessages": false,
+        "fwdInMessages": false,
+        "resendOnRefresh": true,
+        "templateScope": "local",
+        "className": "",
+        "x": 1820,
+        "y": 820,
+        "wires": [
+            []
+        ]
+    },
+    {
+        "id": "fn-mock-ts-A",
+        "type": "function",
+        "z": "tab-renewables",
+        "name": "Build series (Athens)",
+        "func": "const site='Athens';\nconst now=Date.now();\nconst series = Array.from({length:60}, (_,i)=>{\n  const ts=new Date(now-(59-i)*60*1000).toISOString();\n  let v = 450 + 60*Math.sin(i/60*Math.PI*2) + (Math.random()*25-12);\n  // occasional anomaly\n  if(Math.random()<0.05) v += (Math.random()<0.5?-1:1)*120;\n  return { ts, value:+v.toFixed(0) };\n});\nmsg.topic='timeseries';\nmsg.payload={ site, series };\nreturn msg;",
+        "outputs": 1,
+        "noerr": 0,
+        "x": 1520,
+        "y": 780,
+        "wires": [
+            [
+                "tpl-spark"
+            ]
+        ]
+    },
+    {
+        "id": "fn-mock-ts-K",
+        "type": "function",
+        "z": "tab-renewables",
+        "name": "Build series (Komotini)",
+        "func": "const site='Komotini';\nconst now=Date.now();\nconst series = Array.from({length:60}, (_,i)=>{\n  const ts=new Date(now-(59-i)*60*1000).toISOString();\n  let v = 900 + 120*Math.sin(i/30*Math.PI*2) + (Math.random()*40-20);\n  if(Math.random()<0.06) v += (Math.random()<0.5?-1:1)*200; // anomalies\n  return { ts, value:+v.toFixed(0) };\n});\nmsg.topic='timeseries';\nmsg.payload={ site, series };\nreturn msg;",
+        "outputs": 1,
+        "noerr": 0,
+        "x": 1520,
+        "y": 840,
+        "wires": [
+            [
+                "tpl-spark"
+            ]
+        ]
+    },
+    {
+        "id": "tpl-eff",
+        "type": "ui_template",
+        "z": "tab-renewables",
+        "group": "ui-grp-analytics",
+        "name": "Efficiency Gauge",
+        "order": 3,
+        "width": "12",
+        "height": "7",
+        "format": "<div id=\"eff-card\" style=\"display:flex;align-items:center;justify-content:center;width:100%;height:100%\">\n  <canvas id=\"effGauge\" style=\"max-width:360px;max-height:240px\"></canvas>\n</div>\n<script src=\"https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js\"></script>\n<script>\n(function(scope){\n  let chart;\n  function colorFor(p){ return p>=90?'#2e7d32' : p>=70?'#f9a825' : '#b00020'; }\n  function init(ctx){\n    chart = new Chart(ctx,{\n      type:'doughnut',\n      data:{ labels:['Eff','Rest'], datasets:[ { data:[0,100], backgroundColor:['#4caf50','#e0e0e0'], borderWidth:0 } ] },\n      options:{ responsive:true, maintainAspectRatio:false, rotation:-90, circumference:180, plugins:{ legend:{ display:false }, tooltip:{ enabled:false } }, cutout:'70%' }\n    });\n  }\n  function centerText(c, txt, sub){\n    const {ctx, chartArea:{width,height}}=c; ctx.save(); ctx.textAlign='center'; ctx.textBaseline='middle';\n    ctx.fillStyle='#333'; ctx.font='700 22px Arial'; ctx.fillText(txt, width/2, height/2);\n    ctx.font='12px Arial'; ctx.fillStyle='#666'; ctx.fillText(sub, width/2, height/2 + 18); ctx.restore(); }\n  Chart.register({ id:'effCenter', afterDraw(c){ if(!c.config._effLabel) return; const {pct,site} = c.config._effLabel; centerText(c, pct+'%', site); } });\n  function update(p){\n    const pct = Math.max(0, Math.min(100, Math.round(p.pct)));\n    const col = colorFor(pct);\n    chart.data.datasets[0].data = [pct, 100-pct];\n    chart.data.datasets[0].backgroundColor = [col, '#e0e0e0'];\n    chart.config._effLabel = { pct, site: p.site || '–' };\n    chart.update('none');\n  }\n  scope.$watch('msg', function(msg){\n    if(!msg || msg.topic!=='efficiency' || !msg.payload) return;\n    const canvas=document.getElementById('effGauge'); if(!canvas) return;\n    if(!chart) init(canvas.getContext('2d'));\n    const actual=+msg.payload.actual_kW||0, rated=+msg.payload.rated_kW||1;\n    const pct = (actual/rated)*100;\n    update({ pct, site: msg.payload.site||'–' });\n  });\n})(scope);\n</script>",
+        "storeOutMessages": false,
+        "fwdInMessages": false,
+        "resendOnRefresh": true,
+        "templateScope": "local",
+        "x": 1840,
+        "y": 920,
+        "wires": [
+            []
+        ]
+    },
+    {
+        "id": "fn-mock-eff",
+        "type": "function",
+        "z": "tab-renewables",
+        "name": "Build efficiency payload",
+        "func": "const site='Athens';\nconst rated=600;\nconst actual = 300 + Math.random()*300; // 300-600 kW\nmsg.topic='efficiency';\nmsg.payload={ site, actual_kW:+actual.toFixed(0), rated_kW:rated };\nreturn msg;",
+        "outputs": 1,
+        "noerr": 0,
+        "x": 1540,
+        "y": 920,
+        "wires": [
+            [
+                "tpl-eff"
+            ]
+        ]
+    },
+    {
+        "id": "eb55ce7f8a4335f1",
+        "type": "json",
+        "z": "tab-renewables",
+        "name": "JSON stringify -Zakynthos",
+        "property": "payload",
+        "action": "",
+        "pretty": false,
+        "x": 1160,
+        "y": 100,
+        "wires": [
+            [
+                "bfb18f35b54c258d"
+            ]
+        ]
+    },
+    {
+        "id": "bd3dc9bb30e2a5b4",
+        "type": "json",
+        "z": "tab-renewables",
+        "name": "JSON stringify -Lamia",
+        "property": "payload",
+        "action": "",
+        "pretty": false,
+        "x": 1140,
+        "y": 160,
+        "wires": [
+            [
+                "bfb18f35b54c258d"
+            ]
+        ]
+    },
+    {
+        "id": "3ede76b59485d6b1",
+        "type": "json",
+        "z": "tab-renewables",
+        "name": "JSON stringify -Komotini",
+        "property": "payload",
+        "action": "",
+        "pretty": false,
+        "x": 1150,
+        "y": 220,
+        "wires": [
+            [
+                "bfb18f35b54c258d"
+            ]
+        ]
+    },
+    {
+        "id": "6caa693a5c0a9eb3",
+        "type": "json",
+        "z": "tab-renewables",
+        "name": "JSON stringify -Kavala",
+        "property": "payload",
+        "action": "",
+        "pretty": false,
+        "x": 1150,
+        "y": 280,
+        "wires": [
+            [
+                "bfb18f35b54c258d"
+            ]
+        ]
+    },
+    {
+        "id": "a071a4e02f0efdc4",
+        "type": "json",
+        "z": "tab-renewables",
+        "name": "JSON stringify -Nafploio",
+        "property": "payload",
+        "action": "",
+        "pretty": false,
+        "x": 1150,
+        "y": 340,
+        "wires": [
+            [
+                "bfb18f35b54c258d"
+            ]
+        ]
+    },
+    {
+        "id": "f3121ffe4a327fa3",
+        "type": "json",
+        "z": "tab-renewables",
+        "name": "JSON stringify -Ioannina",
+        "property": "payload",
+        "action": "",
+        "pretty": false,
+        "x": 1150,
+        "y": 400,
+        "wires": [
+            [
+                "bfb18f35b54c258d"
+            ]
+        ]
+    },
+    {
+        "id": "54f955ef04f65528",
+        "type": "json",
+        "z": "tab-renewables",
+        "name": "JSON stringify -Kalamata",
+        "property": "payload",
+        "action": "",
+        "pretty": false,
+        "x": 1150,
+        "y": 460,
+        "wires": [
+            [
+                "bfb18f35b54c258d"
+            ]
+        ]
+    },
+    {
+        "id": "bfb18f35b54c258d",
+        "type": "function",
+        "z": "tab-renewables",
+        "d": true,
+        "name": "Function Persist to OptimusDB",
+        "func": "/**\n * Persist a single telemetry record to its assigned OptimusDB node\n * using a REST POST on /swarmkb/command.\n * Works for Solar, Wind, and Hydro sites.\n */\n\n// --- Ensure payload is an object (defensive) ---\nif (typeof msg.payload === \"string\") {\n    try {\n        msg.payload = JSON.parse(msg.payload);\n    } catch (e) {\n        node.status({ fill: \"red\", shape: \"ring\", text: \"invalid JSON\" });\n        node.error(\"Persist: invalid JSON\", msg);\n        return null;\n    }\n}\nif (!msg.payload || typeof msg.payload !== \"object\") {\n    node.status({ fill: \"red\", shape: \"dot\", text: \"missing payload\" });\n    return null;\n}\n\n// --- Map site name → OptimusDB node port ---\nconst nodeMap = {\n    Athens: 18001,\n    Kavala: 18002,\n    Komotini: 18003,\n    Nafplio: 18004,\n    Zakynthos: 18005,\n    Lamia: 18006,\n    Ioannina: 18007,\n    Thessaloniki: 18008\n};\n\n// --- Extract base info safely ---\nconst site = msg.payload.site || \"Unknown\";\nconst type = msg.payload.type || \"Unknown\";\nconst port = nodeMap[site] || 18001;\nconst ts = msg.payload.ts || new Date().toISOString();\n\n// --- UUID generator (browser-safe fallback for Node-RED) ---\nfunction uuidv4() {\n    return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => {\n        const r = Math.random() * 16 | 0;\n        const v = c === 'x' ? r : (r & 0x3 | 0x8);\n        return v.toString(16);\n    });\n}\n\n// --- Build the main OptimusDB command body ---\nconst baseBody = {\n    method: { argcnt: 2, cmd: \"crudput\" },\n    args: [\"dummy1\", \"dummy2\"],\n    dstype: \"dsswres\",\n    sqlselect: \"dummysql\",\n    graph_traversal: [{}],\n    criteria: []\n};\n\n// --- Criteria factory per type ---\nfunction makeCriteria() {\n    const base = {\n        _id: uuidv4(),\n        resource_provider: \"OptimusEdge\",\n        capacity_provider: site,\n        resource_grpname: `Renewable-${type}`,\n        resource_tags: [type, \"telemetry\"],\n        city: site,\n        country: \"Greece\",\n        region: \"South-East Europe\",\n        lat: msg.payload.lat,\n        lon: msg.payload.lon,\n        status: msg.payload.status,\n        last_heartbeat: ts,\n        created_at: ts,\n        updated_at: ts,\n        power_kW: msg.payload.power_kW,\n        energy_type: type,\n        orchestration_id: \"optimusdb-flow-2025\",\n        device: \"Node-RED OPCUA\",\n        network_type: \"swarmnet\",\n        bandwidth: \"local\",\n        storage_type: \"docstore\",\n        powered_type: \"renewable\",\n        pricing: [\"internal credit / simulated\"],\n        Mobility: \"No\"\n    };\n\n    // --- Type-specific attributes ---\n    switch (type) {\n        case \"Solar\":\n            base.resource_type = \"Cloud\";\n            base.resource_def = \"SolarPlant\";\n            base.resource_nature = \"PV\";\n            base.irradiance_Wm2 = msg.payload.irradiance_Wm2 || 0;\n            base.daylight_factor = +(Math.random() * 1).toFixed(2);\n            break;\n\n        case \"Wind\":\n            base.resource_type = \"Edge\";\n            base.resource_def = \"WindTurbine\";\n            base.resource_nature = \"Onshore\";\n            base.wind_mps = msg.payload.wind_mps || 0;\n            base.capacity_factor = +((msg.payload.power_kW || 0) / 1500).toFixed(3);\n            break;\n\n        case \"Hydro\":\n            base.resource_type = \"Infrastructure\";\n            base.resource_def = \"HydroStation\";\n            base.resource_nature = \"Reservoir\";\n            base.water_flow_m3s = +(20 + Math.random() * 50).toFixed(2);\n            base.turbine_efficiency = +(0.75 + Math.random() * 0.15).toFixed(2);\n            break;\n\n        default:\n            base.resource_type = \"Generic\";\n            base.resource_def = \"TelemetrySource\";\n            base.resource_nature = \"Unknown\";\n            break;\n    }\n\n    return base;\n}\n\nbaseBody.criteria.push(makeCriteria());\n// extra safety for some servers\nmsg.headers = {\n    \"Content-Type\": \"application/json\",\n    \"Connection\": \"close\"\n};\nmsg.timeout = 10000; // ms\n\n// --- HTTP POST setup ---\nmsg.method = \"POST\";\nmsg.url = `http://localhost:${port}/swarmkb/command`;\nmsg.headers = { \"Content-Type\": \"application/json\" };\nmsg.payload = baseBody;\n\n// --- UI feedback in Node-RED ---\nnode.status({ fill: \"green\", shape: \"dot\", text: `${site} → OptimusDB:${port}` });\n\n// --- Return the prepared HTTP msg ---\nreturn msg;\n",
+        "outputs": 1,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 1560,
+        "y": 80,
+        "wires": [
+            [
+                "01771a0b0f37d067",
+                "23af1bd7f45627c6"
+            ]
+        ]
+    },
+    {
+        "id": "01771a0b0f37d067",
+        "type": "http request",
+        "z": "tab-renewables",
+        "name": "OptimusDB Persist POST",
+        "method": "use",
+        "ret": "obj",
+        "paytoqs": "ignore",
+        "url": "",
+        "tls": "",
+        "persist": false,
+        "proxy": "",
+        "insecureHTTPParser": false,
+        "authType": "",
+        "senderr": false,
+        "headers": [],
+        "x": 1960,
+        "y": 80,
+        "wires": [
+            []
+        ]
+    },
+    {
+        "id": "23af1bd7f45627c6",
+        "type": "debug",
+        "z": "tab-renewables",
+        "name": "debug 2",
+        "active": true,
+        "tosidebar": true,
+        "console": false,
+        "tostatus": false,
+        "complete": "false",
+        "statusVal": "",
+        "statusType": "auto",
+        "x": 1960,
+        "y": 140,
+        "wires": []
+    },
+    {
+        "id": "b146c3cb1895111b",
+        "type": "function",
+        "z": "tab-renewables",
+        "name": "CheckBefSend",
+        "func": "// Stop OPC writes if the server isn't running\n\n\n\nif (!flow.get(\"opc_running\")) {\n    node.status({ fill: \"red\", shape: \"ring\", text: \"Blocked: server offline\" });\n    return null;  // don't send anything\n}\nnode.status({ fill: \"green\", shape: \"dot\", text: \"Server OK\" });\n\n\n// Guard for OPC UA messages\nif (!msg || typeof msg !== \"object\") return null;\n\n// Accept only properly structured OPC UA messages\nif (!msg.hasOwnProperty(\"messageType\")) return null;\n\n// Sanitize required fields\nif (!msg.namespace) msg.namespace = 1;\nif (!msg.variableName) {\n    node.warn(\"Missing variableName → skipping\");\n    return null;\n}\n\n// OPC Safe Sender – drop or fix malformed messages before reaching OPC UA Server\n\n// 1. Ignore null / undefined messages\nif (!msg || typeof msg !== \"object\") return null;\n\n// 2. Accept only top-level OPC UA messages (not wrapped in payload)\nif (msg.hasOwnProperty(\"payload\") && !msg.hasOwnProperty(\"messageType\")) {\n    // Case where someone nested OPC data inside payload\n    if (msg.payload && msg.payload.messageType) {\n        msg = msg.payload;\n    } else {\n        node.status({ fill: \"red\", shape: \"ring\", text: \"Dropped non-OPC msg\" });\n        return null;\n    }\n}\n\n// 3. Validate core OPC fields\nif (!msg.messageType) {\n    node.status({ fill: \"yellow\", shape: \"ring\", text: \"Missing messageType\" });\n    return null;\n}\nif (!msg.variableName) {\n    node.status({ fill: \"yellow\", shape: \"ring\", text: \"Missing variableName\" });\n    return null;\n}\n\n// 4. Default namespace if missing\nif (!msg.namespace) msg.namespace = 1;\n\n// 5. Optional – log once when things are OK\nnode.status({ fill: \"green\", shape: \"dot\", text: `OK → ${msg.variableName}` });\n\n// 6. Forward clean message to OPC UA Server\nreturn msg;\n\n",
+        "outputs": 1,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 1520,
+        "y": 240,
+        "wires": [
+            [
+                "opcua-server-basic"
+            ]
+        ]
+    },
+    {
+        "id": "6af65fb6805d338a",
+        "type": "status",
+        "z": "tab-renewables",
+        "name": "",
+        "scope": [
+            "opcua-server-basic"
+        ],
+        "x": 1820,
+        "y": 300,
+        "wires": [
+            [
+                "opcua-server-basic",
+                "01260d8a425d1e76"
+            ]
+        ]
+    },
+    {
+        "id": "01260d8a425d1e76",
+        "type": "function",
+        "z": "tab-renewables",
+        "name": "ServerisAlive",
+        "func": "// Save whether the server is running\nif (msg.status && msg.status.text) {\n    const running = msg.status.text.toLowerCase().includes(\"running\");\n    flow.set(\"opc_running\", running);\n    node.status({\n        fill: running ? \"green\" : \"red\",\n        shape: \"dot\",\n        text: running ? \"Server running\" : \"Server down\"\n    });\n}\nreturn null;\n",
+        "outputs": 1,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 1830,
+        "y": 340,
+        "wires": [
+            []
+        ]
+    },
+    {
+        "id": "ui-grp-solar",
+        "type": "ui_group",
+        "name": "Solar Sites",
+        "tab": "ui-tab-ren",
+        "order": 1,
+        "disp": true,
+        "width": "12",
+        "collapse": false
+    },
+    {
+        "id": "ui-grp-wind",
+        "type": "ui_group",
+        "name": "Wind Sites",
+        "tab": "ui-tab-ren",
+        "order": 2,
+        "disp": true,
+        "width": "12",
+        "collapse": false
+    },
+    {
+        "id": "ui-grp-hydro",
+        "type": "ui_group",
+        "name": "Hydro Sites",
+        "tab": "ui-tab-ren",
+        "order": 3,
+        "disp": true,
+        "width": "12",
+        "collapse": false
+    },
+    {
+        "id": "ui-grp-map",
+        "type": "ui_group",
+        "name": "Greece Renewables",
+        "tab": "ui-tab-map",
+        "order": 1,
+        "disp": true,
+        "width": "24",
+        "collapse": false,
+        "className": ""
+    },
+    {
+        "id": "ui-grp-analytics",
+        "type": "ui_group",
+        "name": "Analytics",
+        "tab": "ui-tab-cx",
+        "order": 1,
+        "disp": true,
+        "width": "24",
+        "collapse": false
+    },
+    {
+        "id": "ui-tab-ren",
+        "type": "ui_tab",
+        "name": "Renewables",
+        "icon": "dashboard",
+        "disabled": false,
+        "hidden": false
+    },
+    {
+        "id": "ui-tab-map",
+        "type": "ui_tab",
+        "name": "Map",
+        "icon": "map",
+        "disabled": false,
+        "hidden": false
+    },
+    {
+        "id": "ui-tab-cx",
+        "type": "ui_tab",
+        "name": "CX Insights",
+        "icon": "dashboard",
+        "disabled": false,
+        "hidden": false
+    }
+]

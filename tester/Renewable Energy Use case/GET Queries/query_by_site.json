@@ -1,0 +1,19 @@
+{
+    "method": {
+        "argcnt": 2,
+        "cmd": "query"
+    },
+    "args": [
+        "telemetry",
+        "persist"
+    ],
+    "dstype": "dsswres",
+    "graph_traversal": [
+        {}
+    ],
+    "criteria": [
+        {
+            "capacity_provider": "Athens"
+        }
+    ]
+}

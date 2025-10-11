@@ -1,0 +1,24 @@
+{
+    "method": {
+        "argcnt": 2,
+        "cmd": "query"
+    },
+    "args": [
+        "telemetry",
+        "persist"
+    ],
+    "dstype": "dsswres",
+    "graph_traversal": [
+        {}
+    ],
+    "criteria": [
+        {
+            "energy_type": "Wind"
+        },
+        {
+            "capacity_factor": {
+                "$gt": 0.6
+            }
+        }
+    ]
+}

@@ -1,0 +1,30 @@
+{
+    "method": {
+        "argcnt": 2,
+        "cmd": "query"
+    },
+    "args": [
+        "telemetry",
+        "persist"
+    ],
+    "dstype": "dsswres",
+    "graph_traversal": [
+        {}
+    ],
+    "criteria": [
+        {
+            "$or": [
+                {
+                    "irradiance_Wm2": {
+                        "$gt": 900
+                    }
+                },
+                {
+                    "wind_mps": {
+                        "$gt": 10
+                    }
+                }
+            ]
+        }
+    ]
+}
