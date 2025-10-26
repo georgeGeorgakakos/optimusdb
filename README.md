@@ -33,11 +33,11 @@ Key goals:
 ---
 
 ## Table of Contents
-- [Introduction](docs/OptimusDB — A Decentralized Knowledge & Data Catalog guide.md)
+- [Introduction](docs/OptimusDB_A_KB_DDC_guide.md)
 - [Features](#features)
 - [High Level Architecture](#architecture-high-level)
-- [Query Engine Strategies](docs/OptimusDB - Queries Strategy.md)
-- [Query Engine Mechanisms](docs/OptimusDB - Queries Mechanisms.md)
+- [Query Engine Strategies](docs/OptimusDB_QueriesStrategy.md)
+- [Query Engine Mechanisms](docs/OptimusDB_QueriesMechanisms.md)
 - [Metadata Management](docs/OptimusDB_Metadata_guide.md)
 - [Quick Start](#quick-start)
 - [Prerequisites](#prerequisites)

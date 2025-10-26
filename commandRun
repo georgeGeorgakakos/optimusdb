@@ -327,4 +327,10 @@ git status
 # Add all changes
 git add .
 
+#
+git commit -m "Enhanced detailed READMEs"
+#
+git push -u origin main
+
+
 
