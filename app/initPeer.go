@@ -491,7 +491,17 @@ func IssueConnectCmd(knowledgeBaseDB *KnowledgeBaseDB, peers []string) {
 		*/
 
 		///// incase there is a change in the http payload
-		connectReq := Request{CONNECT, []string{myAddr}, "", "", nil, nil, nil}
+		//connectReq := Request{CONNECT, []string{myAddr}, "", "", nil, nil, nil}
+		connectReq := Request{
+			Method:          CONNECT,
+			Args:            []string{myAddr},
+			DSType:          "",
+			SQLDML:          "",
+			UpdateData:      nil,
+			Options:         nil,
+			Graph_traversal: nil,
+			Criteria:        nil,
+		}
 
 		jsonData, err := json.Marshal(connectReq)
 		if err != nil {

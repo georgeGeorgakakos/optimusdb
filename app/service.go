@@ -12,6 +12,7 @@ import (
 	"optimusdb/config"
 	"optimusdb/datamodel"
 	"optimusdb/ipfs"
+	"optimusdb/queryengine"
 	"os"
 	"os/user"
 	"path/filepath"
@@ -35,6 +36,7 @@ import (
 )
 
 var agentName string
+var handlerOnce sync.Once
 
 // Method defines simple schemas for actions to perform on the db
 type Method struct {
@@ -68,6 +70,36 @@ var (
 // Request Requests are an abstraction for the communication between this applications
 // various apis (shell, http, grpc etc.) and the actual db service
 // (n to 1 relation at the moment)
+// Add near your existing Request struct
+type QueryStrategy string
+type ConsistencyLevel string
+
+const (
+	StrategyLocalOnly            QueryStrategy = "LOCAL_ONLY"
+	StrategyRemoteOnly           QueryStrategy = "REMOTE_ONLY"
+	StrategyLocalThenRemoteMerge QueryStrategy = "LOCAL_THEN_REMOTE_MERGE"
+	StrategyParallelMerge        QueryStrategy = "PARALLEL_MERGE"
+	StrategyQuorum               QueryStrategy = "QUORUM"
+)
+
+const (
+	ConsistencyBestEffort ConsistencyLevel = "BEST_EFFORT" // return as much as we have by budget
+	ConsistencyQuorum     ConsistencyLevel = "QUORUM"      // honor quorum_n
+	ConsistencyAll        ConsistencyLevel = "ALL"         // wait all (bounded by budget)
+)
+
+type QueryOptions struct {
+	Strategy       QueryStrategy    `json:"strategy"`        // default: LOCAL_THEN_REMOTE_MERGE
+	Consistency    ConsistencyLevel `json:"consistency"`     // default: BEST_EFFORT
+	TimeBudgetMs   int              `json:"time_budget_ms"`  // default: 1200
+	QuorumN        int              `json:"quorum_n"`        // number of peers required (for QUORUM)
+	MinRows        int              `json:"min_rows"`        // threshold to stop early if enough rows
+	StaleOkTTLms   int              `json:"stale_ok_ttl_ms"` // use cached remote results within TTL
+	MaxPeers       int              `json:"max_peers"`       // top-K peers by reputation to query
+	IncludeLocal   bool             `json:"include_local"`   // default: true
+	AnnotateSource bool             `json:"annotate_source"` // default: true
+}
+
 type Request struct {
 	Method          Method                   `json:"method"`
 	Args            []string                 `json:"args"`
@@ -76,6 +108,9 @@ type Request struct {
 	UpdateData      []map[string]interface{} `json:"UpdateData"`
 	Criteria        []map[string]interface{} `json:"criteria"`        // Updated type
 	Graph_traversal []map[string]interface{} `json:"graph_Traversal"` // Updated type
+
+	// NEW: //25102025
+	Options *QueryOptions `json:"options,omitempty"`
 }
 
 // SQLQuery represents a parsed SQL query
@@ -144,6 +179,10 @@ func Service(knowledgeBaseDB *KnowledgeBaseDB,
 	// wait for and handle replication event
 	go awaitReplicateEvent(knowledgeBaseDB, logChan)
 
+	handlerOnce.Do(func() {
+		RegisterQueryStreamHandler(knowledgeBaseDB.Node.PeerHost, knowledgeBaseDB)
+	})
+
 	//--------------------------------------------------------------------------
 	// handle API requests
 	for {
@@ -170,6 +209,7 @@ func Service(knowledgeBaseDB *KnowledgeBaseDB,
 			logChan <- Log{Info, "Connecting to " + peerId}
 			res = connect(knowledgeBaseDB, peerId, logChan)
 
+		/* //25102025
 		case strings.ToLower(QUERY.Cmd):
 			logChan <- Log{Info, "Received service request: QUERY"}
 			fmt.Printf("\nReceived service request: %s : ", QUERY.Cmd)
@@ -203,6 +243,139 @@ func Service(knowledgeBaseDB *KnowledgeBaseDB,
 				res = "No records found"
 			}
 
+		*/ //25102025
+
+		////////////////////////////////
+
+		/** Working 1st ex for decentratlization Query 25.10.2025
+		case strings.ToLower(QUERY.Cmd):
+			logChan <- Log{Info, "Received service request: QUERY"}
+			fmt.Printf("\nReceived service request: %s : ", QUERY.Cmd)
+
+			// ... local query code stays the same ...
+			localResults, err := queryLocalDB(knowledgeBaseDB, req.Criteria)
+			if err != nil {
+				logChan <- Log{Type: Info, Data: fmt.Sprintf("QUERY: ERROR querying local DB: %v", err)}
+			} else if len(localResults) > 0 {
+				logChan <- Log{Type: Info, Data: fmt.Sprintf("QUERY: Found %d records locally", len(localResults))}
+				res = localResults
+				break // Return immediately if found locally
+			}
+			logChan <- Log{Type: Info, Data: "QUERY: Data not found locally, using optimized peer query..."}
+			peerResults, err := queryPeersOptimized(knowledgeBaseDB, req.Criteria)
+			// Rest of the code stays the same:
+			if err != nil {
+				logChan <- Log{Type: Info, Data: fmt.Sprintf("QUERY: ERROR querying peers: %v", err)}
+				res = "ERROR! Failed to retrieve records from peers"
+				break
+			}
+			if len(peerResults) > 0 {
+				logChan <- Log{Type: Info, Data: fmt.Sprintf("QUERY: Received %d records from peers", len(peerResults))}
+				storeResults(knowledgeBaseDB, logChan, req.DSType, peerResults)
+				res = peerResults
+			} else {
+				logChan <- Log{Type: Info, Data: "QUERY: No data found in local or peer network"}
+				res = "No records found"
+			}
+
+		*/
+		////////////////////////////////
+		case strings.ToLower(QUERY.Cmd):
+			logChan <- Log{Info, "Received service request: QUERY"}
+
+			// Defaults
+			opt := QueryOptions{
+				Strategy:       StrategyLocalThenRemoteMerge,
+				Consistency:    ConsistencyBestEffort,
+				TimeBudgetMs:   1200,
+				MinRows:        0,
+				QuorumN:        0,
+				IncludeLocal:   true,
+				AnnotateSource: true,
+			}
+			if req.Options != nil {
+				// shallow override
+				if req.Options.Strategy != "" {
+					opt.Strategy = req.Options.Strategy
+				}
+				if req.Options.Consistency != "" {
+					opt.Consistency = req.Options.Consistency
+				}
+				if req.Options.TimeBudgetMs > 0 {
+					opt.TimeBudgetMs = req.Options.TimeBudgetMs
+				}
+				if req.Options.MinRows > 0 {
+					opt.MinRows = req.Options.MinRows
+				}
+				if req.Options.QuorumN > 0 {
+					opt.QuorumN = req.Options.QuorumN
+				}
+				if req.Options.MaxPeers > 0 {
+					opt.MaxPeers = req.Options.MaxPeers
+				}
+				opt.IncludeLocal = req.Options.IncludeLocal || req.Options.IncludeLocal == true
+				opt.AnnotateSource = !(req.Options.AnnotateSource == false)
+			}
+
+			var out []map[string]interface{}
+			var err error
+
+			switch opt.Strategy {
+			case StrategyLocalOnly:
+				out, err = queryLocalDB(knowledgeBaseDB, req.Criteria)
+				if err == nil && opt.AnnotateSource {
+					annotate(out, "local", "", StrategyLocalOnly)
+				}
+
+			case StrategyRemoteOnly:
+				out, err = queryPeersOptimized(knowledgeBaseDB, req.Criteria)
+				if err == nil && opt.AnnotateSource {
+					annotate(out, "peer", "", StrategyRemoteOnly)
+				}
+
+			case StrategyParallelMerge:
+				out, err = parallelMerge(knowledgeBaseDB, req.Criteria, opt)
+
+			case StrategyQuorum:
+				out, err = quorumMerge(knowledgeBaseDB, req.Criteria, opt)
+
+			case StrategyLocalThenRemoteMerge:
+				fallthrough
+			default:
+				out, err = localThenRemoteMerge(knowledgeBaseDB, req.Criteria, opt)
+			}
+
+			if err != nil {
+				logChan <- Log{Type: Info, Data: fmt.Sprintf("QUERY: error: %v", err)}
+				res = map[string]interface{}{"error": err.Error()}
+				break
+			}
+
+			// Optional: persist remote rows you just learned about
+			if len(out) > 0 {
+				storeResults(knowledgeBaseDB, logChan, req.DSType, out)
+			}
+
+			res = out
+
+		////////////////////////////////
+		case strings.ToLower("CACHESTATS"):
+			if knowledgeBaseDB.QueryEngine != nil {
+				stats := knowledgeBaseDB.QueryEngine.CacheStats()
+				res = stats
+			} else {
+				res = map[string]interface{}{
+					"error": "Query engine not initialized",
+				}
+			}
+		case strings.ToLower("CLEARCACHE"):
+			if knowledgeBaseDB.QueryEngine != nil {
+				knowledgeBaseDB.QueryEngine.ClearCache()
+				res = "Cache cleared successfully"
+			} else {
+				res = "Query engine not initialized"
+			}
+		////////////////////////////////
 		case strings.ToLower(SQLDML.Cmd):
 			logChan <- Log{Type: Info, Data: "Received service request: SQL.Cmd"}
 			fmt.Printf("\n[INFO] SQL DML received: %v : %v\n", SQLDML.Cmd, req.SQLDML)
@@ -1981,6 +2154,7 @@ func queryLocalDB(knowledgeBaseDB *KnowledgeBaseDB, criteria []map[string]interf
 	return documents, nil
 }
 
+/*  Change of Method 25.10.2025
 func queryPeers(optimusdb *KnowledgeBaseDB, criteria []map[string]interface{}) ([]map[string]interface{}, error) {
 	ctx := context.Background()
 	//Gets a list of connected peers
@@ -2019,6 +2193,77 @@ func queryPeers(optimusdb *KnowledgeBaseDB, criteria []map[string]interface{}) (
 	// Debug: Print final results count
 	log.Println("[DEBUG] queryPeers: Total records received from peers:", len(allResults))
 	return allResults, nil
+}
+*/
+
+// Change of Method 25.10.2025
+func queryPeers(optimusdb *KnowledgeBaseDB, criteria []map[string]interface{}) ([]map[string]interface{}, error) {
+	ctx := context.Background()
+	peers := optimusdb.Node.PeerHost.Peerstore().Peers()
+	var allResults []map[string]interface{}
+
+	// Debug: Print the list of peers
+	log.Println("[DEBUG] queryPeers: Found", len(peers), "peers.")
+	// Convert `criteria` to `[]interface{}` since Libp2p requires this format
+	var criteriaAsInterface []interface{}
+	for _, c := range criteria {
+		criteriaAsInterface = append(criteriaAsInterface, c)
+	}
+
+	for _, peerID := range peers {
+		if peerID == optimusdb.Node.Identity {
+			log.Println("[DEBUG] Processing peer:", peerID)
+			continue // Skip self
+		}
+		// Debug: Print criteria being sent
+		log.Println("[DEBUG] Sending query to peer:", peerID, "with criteria:", criteriaAsInterface)
+
+		// Send request to peer with converted criteria
+		response, err := sendQueryToPeer(ctx, optimusdb, peerID, criteriaAsInterface)
+		if err == nil && len(response) > 0 {
+			allResults = append(allResults, response...)
+			// Debug: Print received response
+			log.Println("[DEBUG] Received response from peer:", peerID, "| Records:", len(response))
+		} else if err != nil {
+			log.Println("[ERROR] Failed to send query to peer:", peerID, "| Error:", err)
+			continue
+		}
+	}
+
+	// Debug: Print final results count
+	log.Println("[DEBUG] queryPeers: Total records received from peers:", len(allResults))
+	return allResults, nil
+}
+
+// // Added optimized version of Query Peers
+// /
+// /
+func queryPeersOptimized(optimusdb *KnowledgeBaseDB, criteria []map[string]interface{}) ([]map[string]interface{}, error) {
+	ctx := context.Background()
+
+	// Initialize engine if not already done (lazy initialization)
+	if optimusdb.QueryEngine == nil {
+		log.Println("[INFO] Initializing optimized query engine...")
+		optimusdb.QueryEngine = queryengine.NewOptimizedEngine(
+			8,              // 8 worker threads for parallel queries
+			5*time.Second,  // 5 second timeout per query
+			10*time.Minute, // 10 minute cache TTL
+		)
+	}
+
+	// Execute optimized query with worker pool and caching
+	results, err := optimusdb.QueryEngine.Query(
+		ctx,
+		optimusdb.Node.PeerHost,
+		optimusdb.Node.Identity,
+		criteria,
+	)
+
+	if err != nil {
+		return nil, fmt.Errorf("optimized query failed: %w", err)
+	}
+
+	return results, nil
 }
 
 func sendQueryToPeer(ctx context.Context, optimusdb *KnowledgeBaseDB, peerID peer.ID, criteria []interface{}) ([]map[string]interface{}, error) {
@@ -2488,4 +2733,179 @@ func (db *KnowledgeBaseDB) ProcessEMS(action, resource string, params map[string
 	GlobalLoggerDB.AddToOptimusLog("INFO",
 		fmt.Sprintf("EMS %s on %s params=%v", action, resource, params), "ems")
 	return nil
+}
+
+// annotate source information on each item
+func annotate(items []map[string]interface{}, source string, peerID string, strategy QueryStrategy) {
+	for _, it := range items {
+		if _, ok := it["_source"]; !ok {
+			it["_source"] = map[string]interface{}{
+				"type":    source, // "local" or "peer"
+				"peer_id": peerID,
+			}
+		}
+		if _, ok := it["_trace"]; !ok {
+			it["_trace"] = map[string]interface{}{
+				"strategy": string(strategy),
+			}
+		}
+	}
+}
+
+// localThenRemoteMerge executes local first, then remote, and merges within a time budget.
+func localThenRemoteMerge(kb *KnowledgeBaseDB, criteria []map[string]interface{}, opt QueryOptions) ([]map[string]interface{}, error) {
+	if opt.TimeBudgetMs <= 0 {
+		opt.TimeBudgetMs = 1200
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(opt.TimeBudgetMs)*time.Millisecond)
+	defer cancel()
+
+	var local []map[string]interface{}
+	var remote []map[string]interface{}
+	var lerr, rerr error
+	var wg sync.WaitGroup
+
+	if opt.IncludeLocal {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			local, lerr = queryLocalDB(kb, criteria)
+			if lerr == nil && opt.AnnotateSource {
+				annotate(local, "local", "", StrategyLocalThenRemoteMerge)
+			}
+		}()
+	}
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		// respect cache TTL if provided via StaleOkTTLms by configuring your engine TTL
+		if kb.QueryEngine == nil {
+			kb.QueryEngine = queryengine.NewOptimizedEngine(8, 5*time.Second, 10*time.Minute)
+		}
+		remote, rerr = kb.QueryEngine.Query(ctx, kb.Node.PeerHost, kb.Node.Identity, criteria)
+		if rerr == nil && opt.AnnotateSource {
+			annotate(remote, "peer", "", StrategyLocalThenRemoteMerge)
+		}
+	}()
+
+	wg.Wait()
+
+	if lerr != nil && rerr != nil {
+		return nil, fmt.Errorf("local and remote failed: local=%v remote=%v", lerr, rerr)
+	}
+
+	merged := append([]map[string]interface{}{}, local...)
+	merged = append(merged, remote...)
+
+	merged = dedupResults(merged)
+
+	if opt.MinRows > 0 && len(merged) < opt.MinRows {
+		// OPTIONAL: you can perform a second-chance fanout here if needed
+	}
+
+	return merged, nil
+}
+
+// parallelMerge fires local and remote immediately and returns merged results by budget.
+func parallelMerge(kb *KnowledgeBaseDB, criteria []map[string]interface{}, opt QueryOptions) ([]map[string]interface{}, error) {
+	// Same as localThenRemoteMerge (kept for clarity—here they are functionally equivalent)
+	return localThenRemoteMerge(kb, criteria, opt)
+}
+
+// quorumMerge waits for N peer responses (or min rows) then merges with local.
+func quorumMerge(kb *KnowledgeBaseDB, criteria []map[string]interface{}, opt QueryOptions) ([]map[string]interface{}, error) {
+	if opt.QuorumN <= 0 {
+		opt.QuorumN = 2
+	}
+	if opt.TimeBudgetMs <= 0 {
+		opt.TimeBudgetMs = 2000
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(opt.TimeBudgetMs)*time.Millisecond)
+	defer cancel()
+
+	// local first (non-blocking)
+	local, _ := queryLocalDB(kb, criteria)
+	if opt.AnnotateSource {
+		annotate(local, "local", "", StrategyQuorum)
+	}
+
+	// Ask engine for streaming/partial results from peers
+	if kb.QueryEngine == nil {
+		kb.QueryEngine = queryengine.NewOptimizedEngine(8, 5*time.Second, 10*time.Minute)
+	}
+
+	// Use worker pool to query peers individually and collect until quorum/minrows
+	type peerChunk struct {
+		rows   []map[string]interface{}
+		peerID string
+		err    error
+	}
+	chunks := make(chan peerChunk, 32)
+
+	peers := kb.Node.PeerHost.Network().Peers()
+	// Optionally sort peers by reputation here (if you expose a getter)
+	if opt.MaxPeers > 0 && opt.MaxPeers < len(peers) {
+		peers = peers[:opt.MaxPeers]
+	}
+
+	var wg sync.WaitGroup
+	var gotPeers int
+	var collected []map[string]interface{}
+
+	// fanout
+	for _, pid := range peers {
+		wg.Add(1)
+		go func(p peer.ID) {
+			defer wg.Done()
+			rows, err := queryOnePeer(ctx, kb.Node.PeerHost, p, criteria)
+			if err == nil && opt.AnnotateSource {
+				annotate(rows, "peer", p.String(), StrategyQuorum)
+			}
+			chunks <- peerChunk{rows: rows, peerID: p.String(), err: err}
+		}(pid)
+	}
+
+	go func() { wg.Wait(); close(chunks) }()
+
+	for ch := range chunks {
+		if ch.err == nil {
+			gotPeers++
+			collected = append(collected, ch.rows...)
+			if (opt.Consistency == ConsistencyQuorum && gotPeers >= opt.QuorumN) ||
+				(opt.MinRows > 0 && len(collected) >= opt.MinRows) {
+				break
+			}
+		}
+		select {
+		case <-ctx.Done():
+			break
+		default:
+		}
+	}
+
+	merged := append(local, collected...)
+	merged = dedupResults(merged)
+	return merged, nil
+}
+
+// queryOnePeer is a thin wrapper over your existing stream pattern.
+func queryOnePeer(ctx context.Context, hostNode host.Host, peerID peer.ID, criteria []map[string]interface{}) ([]map[string]interface{}, error) {
+	stream, err := hostNode.NewStream(ctx, peerID, "/query/1.0.0")
+	if err != nil {
+		return nil, err
+	}
+	defer stream.Close()
+
+	q := map[string]interface{}{"criteria": criteria}
+	if err := json.NewEncoder(stream).Encode(q); err != nil {
+		return nil, err
+	}
+
+	var rows []map[string]interface{}
+	if err := json.NewDecoder(stream).Decode(&rows); err != nil {
+		return nil, err
+	}
+	return rows, nil
 }

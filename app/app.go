@@ -11,6 +11,8 @@ import (
 	"log"
 	"optimusdb/config"
 	"optimusdb/mq"
+	"optimusdb/queryengine"
+
 	"os"
 	"path/filepath"
 	"runtime"
@@ -61,6 +63,9 @@ type KnowledgeBaseDB struct {
 	// for the watchdog service
 	EMSClient  *mq.ReconnectingClient
 	EMSService *mq.EMSService
+
+	// Query engine
+	QueryEngine *queryengine.OptimizedEngine
 }
 
 // /** this is the struct for the SQL

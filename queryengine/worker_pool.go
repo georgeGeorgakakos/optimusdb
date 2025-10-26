@@ -1,10 +1,11 @@
-package query
+package queryengine
 
 import (
 	"context"
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
+	"github.com/google/uuid"
 	"log"
 	"sync"
 	"time"
@@ -39,6 +40,7 @@ func NewWorkerPoolEngine(maxWorkers int, timeout time.Duration) *WorkerPoolEngin
 func (wpe *WorkerPoolEngine) QueryWithWorkerPool(
 	ctx context.Context,
 	hostNode host.Host,
+	selfID string,
 	criteria []map[string]interface{},
 	peers []peer.ID,
 ) ([]map[string]interface{}, error) {
@@ -46,6 +48,12 @@ func (wpe *WorkerPoolEngine) QueryWithWorkerPool(
 	if len(peers) == 0 {
 		return []map[string]interface{}{}, nil
 	}
+
+	// Generate trace ID for this query
+	traceID := uuid.New().String()
+	var tracePath []string
+
+	log.Printf("[WORKER-POOL] Starting query trace=%s to %d peers", traceID[:8], len(peers))
 
 	// Create context with timeout
 	queryCtx, cancel := context.WithTimeout(ctx, wpe.queryTimeout)
@@ -61,7 +69,7 @@ func (wpe *WorkerPoolEngine) QueryWithWorkerPool(
 	numWorkers := min(wpe.maxWorkers, len(peers))
 	for w := 0; w < numWorkers; w++ {
 		wg.Add(1)
-		go wpe.worker(queryCtx, &wg, hostNode, criteria, jobs, results)
+		go wpe.worker(queryCtx, &wg, hostNode, selfID, criteria, traceID, tracePath, jobs, results)
 	}
 
 	// Send jobs
@@ -87,11 +95,15 @@ func (wpe *WorkerPoolEngine) QueryWithWorkerPool(
 }
 
 // worker processes queries from the job queue
+// worker processes queries from the job queue
 func (wpe *WorkerPoolEngine) worker(
 	ctx context.Context,
 	wg *sync.WaitGroup,
 	hostNode host.Host,
+	selfID string,
 	criteria []map[string]interface{},
+	traceID string,
+	tracePath []string,
 	jobs <-chan peer.ID,
 	results chan<- QueryResult,
 ) {
@@ -103,7 +115,7 @@ func (wpe *WorkerPoolEngine) worker(
 			return
 		default:
 			start := time.Now()
-			data, err := wpe.queryPeer(ctx, hostNode, peerID, criteria)
+			data, err := wpe.queryPeer(ctx, hostNode, peerID, criteria, selfID, traceID, tracePath)
 			latency := time.Since(start)
 
 			results <- QueryResult{
@@ -116,12 +128,15 @@ func (wpe *WorkerPoolEngine) worker(
 	}
 }
 
-// queryPeer sends a query to a single peer
+// queryPeer sends a query to a single peer with proper options
 func (wpe *WorkerPoolEngine) queryPeer(
 	ctx context.Context,
 	hostNode host.Host,
 	peerID peer.ID,
 	criteria []map[string]interface{},
+	selfID string,
+	traceID string,
+	tracePath []string,
 ) ([]map[string]interface{}, error) {
 
 	// Open stream to peer
@@ -131,10 +146,20 @@ func (wpe *WorkerPoolEngine) queryPeer(
 	}
 	defer stream.Close()
 
-	// Create query message
+	// Create query message with proper options and trace info
+	// This is CRITICAL: The peer's query handler expects these fields!
 	queryMsg := map[string]interface{}{
-		"criteria": criteria,
+		"criteria":   criteria,
+		"trace_id":   traceID,
+		"trace_path": append(tracePath, selfID), // Prevents loops
+		"options": map[string]interface{}{
+			"strategy":        "LOCAL_ONLY", // Force peers to only query their local DB
+			"include_local":   true,
+			"annotate_source": true,
+		},
 	}
+
+	log.Printf("[WORKER-POOL] Sending query trace=%s to peer %s", traceID[:8], peerID.String()[:8])
 
 	// Send query
 	if err := json.NewEncoder(stream).Encode(queryMsg); err != nil {
@@ -146,6 +171,8 @@ func (wpe *WorkerPoolEngine) queryPeer(
 	if err := json.NewDecoder(stream).Decode(&results); err != nil {
 		return nil, fmt.Errorf("failed to decode response: %w", err)
 	}
+
+	log.Printf("[WORKER-POOL] Received %d results from peer %s", len(results), peerID.String()[:8])
 
 	return results, nil
 }
@@ -159,13 +186,13 @@ func (wpe *WorkerPoolEngine) collectResults(results <-chan QueryResult) ([]map[s
 
 	for result := range results {
 		if result.Error != nil {
-			log.Printf("[WARN] Query to peer %s failed: %v", result.PeerID, result.Error)
+			log.Printf("[WORKER-POOL] Query to peer %s failed: %v", result.PeerID, result.Error)
 			errorCount++
 			continue
 		}
 
 		successCount++
-		log.Printf("[INFO] Received %d results from peer %s in %v", len(result.Data), result.PeerID, result.Latency)
+		log.Printf("[WORKER-POOL] Received %d results from peer %s in %v", len(result.Data), result.PeerID, result.Latency)
 
 		// Deduplicate
 		for _, item := range result.Data {
@@ -177,7 +204,7 @@ func (wpe *WorkerPoolEngine) collectResults(results <-chan QueryResult) ([]map[s
 		}
 	}
 
-	log.Printf("[INFO] Query complete: %d successful, %d failed, %d unique results", successCount, errorCount, len(allData))
+	log.Printf("[WORKER-POOL] Query complete: %d successful, %d failed, %d unique results", successCount, errorCount, len(allData))
 
 	return allData, nil
 }

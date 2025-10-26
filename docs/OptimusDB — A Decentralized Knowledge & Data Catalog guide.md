@@ -226,3 +226,7 @@ Upload a Base64-encoded TOSCA YAML file for parsing, IPFS persistence, and Orbit
 
     - **George Georgakakos** – [@georgeGeorgakakos](https://github.com/georgeGeorgakakos)
     - **OptimusDB / Swarmchestrate** – decentralized metadata and knowledge federation project
+
+    **© 2025 OptimusDB Research Team**
+    **License**: MPL 2.0
+    **Repository**: https://github.com/georgegeorgakakos/optimusdb

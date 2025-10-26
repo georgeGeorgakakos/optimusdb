@@ -13,10 +13,10 @@
     "z": "f78e40b03f9d5173",
     "name": "Trigger Logs Fetch",
     "props": [],
-    "repeat": "60",
+    "repeat": "20",
     "crontab": "",
     "once": true,
-    "onceDelay": "1",
+    "onceDelay": "5",
     "topic": "",
     "x": 170,
     "y": 40,
@@ -75,6 +75,7 @@
     "id": "render_table",
     "type": "ui_template",
     "z": "f78e40b03f9d5173",
+    "d": true,
     "group": "dashboard_group",
     "name": "Log Table",
     "order": 1,
@@ -86,7 +87,7 @@
     "resendOnRefresh": true,
     "templateScope": "local",
     "className": "",
-    "x": 600,
+    "x": 660,
     "y": 520,
     "wires": [
       [
@@ -163,7 +164,7 @@
     "type": "debug",
     "z": "f78e40b03f9d5173",
     "name": "debug 1",
-    "active": false,
+    "active": true,
     "tosidebar": true,
     "console": false,
     "tostatus": false,
@@ -171,8 +172,8 @@
     "targetType": "full",
     "statusVal": "",
     "statusType": "auto",
-    "x": 720,
-    "y": 80,
+    "x": 580,
+    "y": 40,
     "wires": []
   },
   {
@@ -188,8 +189,8 @@
     "targetType": "full",
     "statusVal": "",
     "statusType": "auto",
-    "x": 410,
-    "y": 360,
+    "x": 730,
+    "y": 160,
     "wires": []
   },
   {
@@ -204,8 +205,8 @@
     "initialize": "",
     "finalize": "",
     "libs": [],
-    "x": 650,
-    "y": 440,
+    "x": 710,
+    "y": 220,
     "wires": [
       [
         "4eccceb2a6917e42"
@@ -225,8 +226,8 @@
     "targetType": "full",
     "statusVal": "",
     "statusType": "auto",
-    "x": 980,
-    "y": 260,
+    "x": 1000,
+    "y": 220,
     "wires": []
   },
   {
@@ -242,8 +243,8 @@
     "targetType": "full",
     "statusVal": "",
     "statusType": "auto",
-    "x": 440,
-    "y": 300,
+    "x": 740,
+    "y": 120,
     "wires": []
   },
   {
@@ -258,12 +259,14 @@
     "initialize": "",
     "finalize": "",
     "libs": [],
-    "x": 170,
-    "y": 520,
+    "x": 1330,
+    "y": 280,
     "wires": [
       [
-        "render_table",
-        "a1115bcab8cb67dd"
+        "a1115bcab8cb67dd",
+        "fmt_errspark",
+        "fmt_heatmap",
+        "0af8f36d02042d90"
       ]
     ]
   },
@@ -280,14 +283,15 @@
     "targetType": "full",
     "statusVal": "",
     "statusType": "auto",
-    "x": 340,
-    "y": 720,
+    "x": 180,
+    "y": 900,
     "wires": []
   },
   {
     "id": "d3740aa9f552118b",
     "type": "debug",
     "z": "f78e40b03f9d5173",
+    "d": true,
     "name": "Beauty4",
     "active": false,
     "tosidebar": true,
@@ -424,8 +428,8 @@
     "targetType": "full",
     "statusVal": "",
     "statusType": "auto",
-    "x": 460,
-    "y": 580,
+    "x": 1320,
+    "y": 220,
     "wires": []
   },
   {
@@ -440,13 +444,16 @@
     "initialize": "",
     "finalize": "",
     "libs": [],
-    "x": 90,
-    "y": 680,
+    "x": 130,
+    "y": 440,
     "wires": [
       [
-        "4c8a2c445896de98",
         "31159392f58cb1fc",
-        "ae39ca0ab634cbce"
+        "ae39ca0ab634cbce",
+        "fmt_status",
+        "fmt_scatter",
+        "a0c3e0f38d2c9a11",
+        "4c8a2c445896de98"
       ]
     ]
   },
@@ -1598,12 +1605,13 @@
     "id": "4e3f114d2ab0e093",
     "type": "ui_template",
     "z": "f78e40b03f9d5173",
+    "d": true,
     "group": "cb0e236ca4eaa6b0",
     "name": "",
     "order": 1,
     "width": 0,
     "height": 0,
-    "format": "<style>\n    #topology-wrapper {\n        background-color: #111;\n        width: 100vw;\n        height: 100vh;\n        margin: 0;\n        padding: 0;\n    }\n\n    #topology-container {\n        width: 100%;\n        height: 100%;\n    }\n</style>\n\n<div id=\"topology-wrapper\">\n    <div id=\"topology-container\"></div>\n</div>\n\n<script src=\"https://unpkg.com/vis-network/standalone/umd/vis-network.min.js\"></script>\n<script>\n    (function(scope) {\n    let network;\n\n    function renderGraph(agents) {\n        const container = document.getElementById('topology-container');\n        container.innerHTML = '';\n\n        const nodes = [];\n        const edges = [];\n\n        agents.forEach(agent => {\n            // Main agent node\n            nodes.push({\n                id: agent.node,\n                label: `${agent.node}\\n(${agent.role || 'Unknown'})`,\n                shape: 'ellipse',\n                color: agent.role === 'Coordinator' ? '#00aaff' : '#cccccc'\n            });\n\n            // API node (IP layer)\n            const apiNodeId = `${agent.node}-api`;\n            nodes.push({\n                id: apiNodeId,\n                label: agent.api || 'API',\n                shape: 'box',\n                size: 10,\n                font: { size: 10 },\n                color: '#ffaa00'\n            });\n\n            // Edge from agent to API node\n            edges.push({\n                from: agent.node,\n                to: apiNodeId,\n                arrows: { to: { enabled: true, scaleFactor: 1.2 } },\n                color: { color: '#ffaa00' },\n                label: 'API'\n            });\n        });\n        //George2\n        // Inter-agent communication edges\n        for (let i = 0; i < agents.length; i++) {\n            for (let j = i + 1; j < agents.length; j++) {\n                // Election edge\n                edges.push({\n                    from: agents[i].node,\n                    to: agents[j].node,\n                    arrows: { to: { enabled: true, scaleFactor: 1.2 } },\n                    color: { color: '#00ff99' },\n                    label: 'Election'\n                });\n\n                // Heartbeat/Replication edge\n                edges.push({\n                    from: agents[j].node,\n                    to: agents[i].node,\n                    arrows: { to: { enabled: true, scaleFactor: 1.2 } },\n                    color: { color: '#ff6666' },\n                    label: 'Replication'\n                });\n\n                // Decentralized Query edge\n                edges.push({\n                    from: agents[i].node,\n                    to: agents[j].node,\n                    arrows: { to: { enabled: true, scaleFactor: 1.2 } },\n                    color: { color: '#ffaaee' },\n                    dashes: true,\n                    label: 'Decentralized Query'\n                });\n            }\n        }\n\n        const data = {\n            nodes: new vis.DataSet(nodes),\n            edges: new vis.DataSet(edges)\n        };\n\n        const options = {\n            layout: { improvedLayout: true },\n            physics: {\n                solver: \"forceAtlas2Based\",\n                forceAtlas2Based: {\n                    gravitationalConstant: -50,\n                    springLength: 300,\n                    springConstant: 0.05\n                },\n                stabilization: { iterations: 150 }\n            },\n            nodes: { font: { size: 16 } },\n            edges: {\n                width: 1.2,\n                arrows: {\n                    to: { enabled: true, scaleFactor: 1.2 }\n                },\n                smooth: {\n                    type: 'dynamic'\n                },\n                font: {\n                    align: 'middle'\n                }\n            }\n        };\n\n        network = new vis.Network(container, data, options);\n    }\n\n    scope.$watch('msg.payload.agents', function(agents) {\n        if (!agents || !Array.isArray(agents)) return;\n        renderGraph(agents);\n    });\n})(scope);\n</script>",
+    "format": "<style>\n    #topology-wrapper {\n        background-color: #111;\n        width: 100vw;\n        height: 100vh;\n        margin: 0;\n        padding: 0;\n    }\n\n    #topology-container {\n        width: 100%;\n        height: 100%;\n    }\n</style>\n\n<div id=\"topology-wrapper\">\n    <div id=\"topology-container\"></div>\n</div>\n<script src=\"https://unpkg.com/vis-network@9.1.6/standalone/umd/vis-network.min.js\"></script>\n<!--<script src=\"https://unpkg.com/vis-network/standalone/umd/vis-network.min.js\"></script>-->\n<script>\n    (function(scope) {\n    let network;\n\n    function renderGraph(agents) {\n        const container = document.getElementById('topology-container');\n        container.innerHTML = '';\n\n        const nodes = [];\n        const edges = [];\n\n        agents.forEach(agent => {\n            // Main agent node\n            nodes.push({\n                id: agent.node,\n                label: `${agent.node}\\n(${agent.role || 'Unknown'})`,\n                shape: 'ellipse',\n                color: agent.role === 'Coordinator' ? '#00aaff' : '#cccccc'\n            });\n\n            // API node (IP layer)\n            const apiNodeId = `${agent.node}-api`;\n            nodes.push({\n                id: apiNodeId,\n                label: agent.api || 'API',\n                shape: 'box',\n                size: 10,\n                font: { size: 10 },\n                color: '#ffaa00'\n            });\n\n            // Edge from agent to API node\n            edges.push({\n                from: agent.node,\n                to: apiNodeId,\n                arrows: { to: { enabled: true, scaleFactor: 1.2 } },\n                color: { color: '#ffaa00' },\n                label: 'API'\n            });\n        });\n        //George2\n        // Inter-agent communication edges\n        for (let i = 0; i < agents.length; i++) {\n            for (let j = i + 1; j < agents.length; j++) {\n                // Election edge\n                edges.push({\n                    from: agents[i].node,\n                    to: agents[j].node,\n                    arrows: { to: { enabled: true, scaleFactor: 1.2 } },\n                    color: { color: '#00ff99' },\n                    label: 'Election'\n                });\n\n                // Heartbeat/Replication edge\n                edges.push({\n                    from: agents[j].node,\n                    to: agents[i].node,\n                    arrows: { to: { enabled: true, scaleFactor: 1.2 } },\n                    color: { color: '#ff6666' },\n                    label: 'Replication'\n                });\n\n                // Decentralized Query edge\n                edges.push({\n                    from: agents[i].node,\n                    to: agents[j].node,\n                    arrows: { to: { enabled: true, scaleFactor: 1.2 } },\n                    color: { color: '#ffaaee' },\n                    dashes: true,\n                    label: 'Decentralized Query'\n                });\n            }\n        }\n\n        const data = {\n            nodes: new vis.DataSet(nodes),\n            edges: new vis.DataSet(edges)\n        };\n\n        const options = {\n            layout: { improvedLayout: true },\n            physics: {\n                solver: \"forceAtlas2Based\",\n                forceAtlas2Based: {\n                    gravitationalConstant: -50,\n                    springLength: 300,\n                    springConstant: 0.05\n                },\n                stabilization: { iterations: 150 }\n            },\n            nodes: { font: { size: 16 } },\n            edges: {\n                width: 1.2,\n                arrows: {\n                    to: { enabled: true, scaleFactor: 1.2 }\n                },\n                smooth: {\n                    type: 'dynamic'\n                },\n                font: {\n                    align: 'middle'\n                }\n            }\n        };\n\n        network = new vis.Network(container, data, options);\n    }\n\n    scope.$watch('msg.payload.agents', function(agents) {\n        if (!agents || !Array.isArray(agents)) return;\n        renderGraph(agents);\n    });\n})(scope);\n</script>",
     "storeOutMessages": true,
     "fwdInMessages": true,
     "resendOnRefresh": true,
@@ -1619,6 +1627,7 @@
     "id": "ae39ca0ab634cbce",
     "type": "function",
     "z": "f78e40b03f9d5173",
+    "d": true,
     "name": "Metrics Formatter_Split",
     "func": "// Extract unique agents and their roles\nconst flat = msg.payload.agentLogs_flat || [];\n\nconst agentsMap = {};\nflat.forEach(entry => {\n    const id = entry.node;\n    if (!agentsMap[id]) {\n        agentsMap[id] = {\n            node: id,\n            role: entry.role || \"Unknown\"\n        };\n    }\n});\n\nmsg.payload = {\n    agents: Object.values(agentsMap)\n};\nreturn msg;\n",
     "outputs": 1,
@@ -1640,7 +1649,7 @@
     "type": "debug",
     "z": "f78e40b03f9d5173",
     "name": "Beauty5",
-    "active": false,
+    "active": true,
     "tosidebar": true,
     "console": false,
     "tostatus": false,
@@ -1648,8 +1657,8 @@
     "targetType": "full",
     "statusVal": "",
     "statusType": "auto",
-    "x": 340,
-    "y": 660,
+    "x": 540,
+    "y": 380,
     "wires": []
   },
   {
@@ -2805,6 +2814,298 @@
     ]
   },
   {
+    "id": "ui_status_grid",
+    "type": "ui_template",
+    "z": "f78e40b03f9d5173",
+    "group": "grp_status",
+    "name": "Status Grid",
+    "order": 1,
+    "width": 24,
+    "height": 7,
+    "format": "<style>\n  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:12px}\n  .tile{padding:12px;border-radius:12px;color:#fff;box-shadow:0 2px 10px rgba(0,0,0,.15)}\n  .ok{background:#1abc9c}.warn{background:#f39c12}.down{background:#e74c3c}\n  .small{font-size:12px;opacity:.85}\n</style>\n<div class=\"grid\">\n  <div class=\"tile {{(t.status||'').toLowerCase()}}\" ng-repeat=\"t in (tiles=(tiles||{}),(tiles[msg.payload.node]=msg.payload),tiles) track by $index\">\n    <div style=\"font-weight:700\">{{t.node}}</div>\n    <div class=\"small\">Status: {{t.status}} · {{t.ageSec||0}}s ago</div>\n    <div class=\"small\" ng-if=\"t.err\">Last err: {{t.err}}</div>\n    <div class=\"small\">Role: {{t.role||'Unknown'}} · Health: {{t.health||0}}%</div>\n  </div>\n</div>",
+    "storeOutMessages": true,
+    "fwdInMessages": false,
+    "templateScope": "local",
+    "x": 1885,
+    "y": 360,
+    "wires": [
+      []
+    ]
+  },
+  {
+    "id": "fmt_status",
+    "type": "function",
+    "z": "f78e40b03f9d5173",
+    "name": "Format → tiles",
+    "func": "const m = msg.payload || msg;\nconst now = Date.now();\nconst ts = m.timestamp ? (new Date(m.timestamp)).getTime() : now;\nconst ageSec = Math.max(0, Math.round((now - ts)/1000));\nconst health = Number(m.health)||0;\nconst status = health>85 ? 'OK' : (health>65 ? 'WARN' : 'DOWN');\nmsg.payload = {\n  node: m.node || 'unknown',\n  status, ageSec,\n  role: m.role || 'Unknown',\n  health: +health.toFixed(0),\n  err: m.lastError || ''\n};\nreturn msg;",
+    "outputs": 1,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 1600,
+    "y": 360,
+    "wires": [
+      [
+        "ui_status_grid"
+      ]
+    ]
+  },
+  {
+    "id": "ui_scatter",
+    "type": "ui_chart",
+    "z": "f78e40b03f9d5173",
+    "name": "CPU vs Latency",
+    "group": "grp_scatter",
+    "order": 1,
+    "width": 12,
+    "height": 7,
+    "label": "CPU vs Latency",
+    "chartType": "line",
+    "legend": "true",
+    "xformat": "auto",
+    "interpolate": "linear",
+    "nodata": "No samples",
+    "dot": true,
+    "ymin": "0",
+    "ymax": "",
+    "removeOlder": 1,
+    "removeOlderPoints": "200",
+    "removeOlderUnit": "3600",
+    "useOneColor": false,
+    "useUTC": false,
+    "colors": [
+      "#1f77b4",
+      "#ff7f0e",
+      "#2ca02c",
+      "#d62728",
+      "#9467bd",
+      "#8c564b"
+    ],
+    "outputs": 1,
+    "x": 1885,
+    "y": 440,
+    "wires": [
+      []
+    ]
+  },
+  {
+    "id": "fmt_scatter",
+    "type": "function",
+    "z": "f78e40b03f9d5173",
+    "name": "Format → scatter",
+    "func": "const m = msg.payload || msg;\nconst nodeId = m.node || 'unknown';\nconst cpu = Number(m.cpu)||0;\nconst lat = Number(m.latency)||0;\nmsg.topic = nodeId;\nmsg.payload = [{\n  series:[\"CPU vs Lat\"],\n  data:[[{x: cpu, y: lat}]],\n  labels:[\"\"]\n}];\nreturn msg;",
+    "outputs": 1,
+    "x": 1605,
+    "y": 440,
+    "wires": [
+      [
+        "ui_scatter"
+      ]
+    ]
+  },
+  {
+    "id": "ui_errspark",
+    "type": "ui_chart",
+    "z": "f78e40b03f9d5173",
+    "name": "Errors/min per node",
+    "group": "grp_errspark",
+    "order": 1,
+    "width": 12,
+    "height": 7,
+    "label": "Errors per minute",
+    "chartType": "line",
+    "legend": "true",
+    "xformat": "auto",
+    "interpolate": "linear",
+    "nodata": "No log data",
+    "dot": false,
+    "ymin": "0",
+    "ymax": "",
+    "removeOlder": 1,
+    "removeOlderPoints": "180",
+    "removeOlderUnit": "3600",
+    "useOneColor": false,
+    "useUTC": false,
+    "outputs": 1,
+    "x": 1885,
+    "y": 600,
+    "wires": [
+      []
+    ]
+  },
+  {
+    "id": "fmt_errspark",
+    "type": "function",
+    "z": "f78e40b03f9d5173",
+    "name": "Aggregate → errors/min",
+    "func": "// Accepts either an array of rows in payload.agentLogs_flat OR a single row\nfunction pushRow(row){\n  const node = row.node || 'unknown';\n  const tmin = Math.floor((new Date(row.timestamp||Date.now())).getTime()/60000);\n  if (row.level === 'ERROR') {\n    buckets[node] = buckets[node] || {};\n    buckets[node][tmin] = (buckets[node][tmin]||0) + 1;\n  }\n}\n\nlet buckets = flow.get('errBuckets') || {};\nconst p = msg.payload || {};\nif (Array.isArray(p.agentLogs_flat)) {\n  for (const r of p.agentLogs_flat) pushRow(r);\n} else if (Array.isArray(p)) {\n  for (const r of p) pushRow(r);\n} else if (p && typeof p === 'object') {\n  pushRow(p);\n}\nflow.set('errBuckets', buckets);\n\n// Build series for each node for last 60 minutes\nconst nowMin = Math.floor(Date.now()/60000);\nconst outMsgs = [];\nfor (const node of Object.keys(buckets)){\n  const data = [];\n  for (let t = nowMin-59; t<=nowMin; t++) data.push({x: t*60000, y: (buckets[node][t]||0)});\n  outMsgs.push({\n    topic: node,\n    payload: [{ series:[\"Errors/min\"], data:[data], labels:[\"\"] }]\n  });\n}\nreturn [outMsgs];",
+    "outputs": 1,
+    "x": 1615,
+    "y": 600,
+    "wires": [
+      [
+        "ui_errspark"
+      ]
+    ]
+  },
+  {
+    "id": "ui_heatmap",
+    "type": "ui_template",
+    "z": "f78e40b03f9d5173",
+    "group": "grp_heatmap",
+    "name": "CPU Heatmap",
+    "order": 1,
+    "width": 24,
+    "height": 8,
+    "format": "<style>\n.hm{border-collapse:collapse;font-size:11px;width:100%}\n.hm td,.hm th{border:1px solid #333;padding:3px 6px;text-align:center}\n.sticky th{position:sticky;top:0;background:#111;color:#eee}\n</style>\n<table class=\"hm sticky\">\n  <tr>\n    <th>Node \\ Time</th>\n    <th ng-repeat=\"t in times\">{{t}}</th>\n  </tr>\n  <tr ng-repeat=\"(node,row) in matrix\">\n    <th>{{node}}</th>\n    <td ng-repeat=\"val in row\" ng-style=\"{'background': color(val), 'color':'#fff'}\">{{val}}</td>\n  </tr>\n</table>\n<script>\n(function(scope){\n  scope.color = v=>{ if(v==null) return '#222'; const c=Math.max(0,Math.min(100,v)); const r=Math.round(2.55*c), g=Math.round(2.55*(100-c)); return `rgb(${r},${g},80)`; };\n  scope.$watch('msg.payload', p=>{ if(!p) return; scope.times=p.times; scope.matrix=p.matrix; });\n})(scope);\n</script>",
+    "storeOutMessages": false,
+    "fwdInMessages": false,
+    "templateScope": "local",
+    "x": 1885,
+    "y": 520,
+    "wires": [
+      []
+    ]
+  },
+  {
+    "id": "fmt_heatmap",
+    "type": "function",
+    "z": "f78e40b03f9d5173",
+    "name": "Update heatmap state",
+    "func": "const m = msg.payload || msg;\nconst label = new Date().toTimeString().slice(0,5);\nlet state = flow.get('hm_state') || { times: [], data: {} };\nif (state.times[state.times.length-1] !== label) state.times.push(label);\nif (state.times.length > 20) state.times.shift();\nconst node = m.node || 'unknown';\nstate.data[node] = state.data[node] || [];\nstate.data[node].push(Math.round(Number(m.cpu)||0));\nwhile (state.data[node].length > state.times.length) state.data[node].shift();\nflow.set('hm_state', state);\nmsg.payload = { times: state.times, matrix: state.data };\nreturn msg;",
+    "outputs": 1,
+    "x": 1605,
+    "y": 520,
+    "wires": [
+      [
+        "ui_heatmap"
+      ]
+    ]
+  },
+  {
+    "id": "0af8f36d02042d90",
+    "type": "ui_template",
+    "z": "f78e40b03f9d5173",
+    "group": "dashboard_group",
+    "name": "Log Table(Beaut)",
+    "order": 1,
+    "width": 0,
+    "height": 0,
+    "format": "<style>\n  .logs-toolbar {\n    display: flex;\n    gap: 8px;\n    flex-wrap: wrap;\n    align-items: center;\n    margin: 6px 0\n  }\n\n  .logs-toolbar input,\n  .logs-toolbar select {\n    padding: 6px 8px;\n    border: 1px solid #ccc;\n    border-radius: 8px;\n    background: #fff;\n    color: #222\n  }\n\n  .logs-toolbar label {\n    font-size: 12px;\n    opacity: .8;\n    margin-right: 6px\n  }\n\n  .logs-pager {\n    display: flex;\n    align-items: center;\n    gap: 6px;\n    margin: 8px 0\n  }\n\n  .btn {\n    padding: 6px 10px;\n    border: 1px solid #888;\n    border-radius: 8px;\n    background: #f4f4f4;\n    cursor: pointer\n  }\n\n  .btn[disabled] {\n    opacity: .5;\n    cursor: not-allowed\n  }\n\n  .btn.primary {\n    background: #097479;\n    color: #fff;\n    border-color: #085a5e\n  }\n\n  .btn.toggle.active {\n    background: #ffefef;\n    border-color: #ff6b6b\n  }\n\n  .logs-table-wrap {\n    width: 100%;\n    height: 75vh;\n    overflow: auto;\n    border: 1px solid #333;\n    border-radius: 10px\n  }\n\n  table.logs {\n    width: 100%;\n    border-collapse: collapse;\n    font-size: 12px\n  }\n\n  table.logs th,\n  table.logs td {\n    border-bottom: 1px solid #2a2a2a;\n    padding: 6px;\n    vertical-align: top\n  }\n\n  table.logs thead th {\n    position: sticky;\n    top: 0;\n    background: #097479;\n    color: #fff;\n    z-index: 1\n  }\n\n  .level-ERROR {\n    color: #ff6666;\n    font-weight: 700\n  }\n\n  .level-WARN {\n    color: #f5c542;\n    font-weight: 700\n  }\n\n  .mono {\n    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, \"Liberation Mono\", \"Courier New\", monospace\n  }\n\n  details.columns {\n    padding: 4px 8px;\n    border: 1px solid #ccc;\n    border-radius: 8px;\n    background: #fff\n  }\n\n  details.columns summary {\n    cursor: pointer;\n    user-select: none\n  }\n</style>\n\n<div class=\"logs-toolbar\">\n  <label>Search</label>\n  <input type=\"text\" ng-model=\"vm.q\" placeholder=\"message / source / node / level\" ng-change=\"vm.apply()\">\n\n  <label>Level</label>\n  <select ng-model=\"vm.level\" ng-change=\"vm.apply()\">\n    <option value=\"\">All</option>\n    <option ng-repeat=\"lv in vm.levels\" value=\"{{lv}}\">{{lv}}</option>\n  </select>\n\n  <label>Node</label>\n  <select ng-model=\"vm.node\" ng-change=\"vm.apply()\">\n    <option value=\"\">All</option>\n    <option ng-repeat=\"n in vm.nodes\" value=\"{{n}}\">{{n}}</option>\n  </select>\n\n  <label>From</label>\n  <input type=\"datetime-local\" ng-model=\"vm.from\" ng-change=\"vm.apply()\">\n  <label>To</label>\n  <input type=\"datetime-local\" ng-model=\"vm.to\" ng-change=\"vm.apply()\">\n\n  <label>Page size</label>\n  <select ng-model=\"vm.pageSize\" ng-change=\"vm.resetToFirst()\">\n    <option ng-repeat=\"s in [10,20,50,100]\" value=\"{{s}}\">{{s}}</option>\n  </select>\n\n  <button class=\"btn toggle\" ng-class=\"{active: vm.errorsOnly}\" ng-click=\"vm.toggleErrorsOnly()\">ERROR only</button>\n  <button class=\"btn\" ng-click=\"vm.clearFilters()\">Clear</button>\n\n  <details class=\"columns\">\n    <summary>Columns</summary>\n    <div style=\"display:flex;gap:12px;flex-wrap:wrap;margin-top:6px\">\n      <label><input type=\"checkbox\" ng-model=\"vm.cols.timestamp\" ng-change=\"vm.persistCols()\"> Timestamp</label>\n      <label><input type=\"checkbox\" ng-model=\"vm.cols.level\" ng-change=\"vm.persistCols()\"> Level</label>\n      <label><input type=\"checkbox\" ng-model=\"vm.cols.message\" ng-change=\"vm.persistCols()\"> Message</label>\n      <label><input type=\"checkbox\" ng-model=\"vm.cols.source\" ng-change=\"vm.persistCols()\"> Source</label>\n      <label><input type=\"checkbox\" ng-model=\"vm.cols.node\" ng-change=\"vm.persistCols()\"> Agent</label>\n    </div>\n  </details>\n\n  <div style=\"margin-left:auto;display:flex;gap:6px\">\n    <button class=\"btn\" ng-click=\"vm.exportCSV('page')\">Export Page CSV</button>\n    <button class=\"btn primary\" ng-click=\"vm.exportCSV('filtered')\">Export Filtered CSV</button>\n  </div>\n</div>\n\n<div class=\"logs-pager\">\n  <button class=\"btn\" ng-click=\"vm.first()\" ng-disabled=\"vm.page<=1\">⏮ First</button>\n  <button class=\"btn\" ng-click=\"vm.prev()\"  ng-disabled=\"vm.page<=1\">◀ Prev</button>\n  <span>Page</span>\n  <input type=\"number\" min=\"1\" style=\"width:70px\" ng-model=\"vm.page\" ng-change=\"vm.fixPage()\">\n  <span>of {{vm.totalPages||1}}</span>\n  <button class=\"btn\" ng-click=\"vm.next()\"  ng-disabled=\"vm.page>=vm.totalPages\">Next ▶</button>\n  <button class=\"btn\" ng-click=\"vm.last()\"  ng-disabled=\"vm.page>=vm.totalPages\">Last ⏭</button>\n  <span style=\"margin-left:12px;opacity:.7\">Showing {{vm.sliceStart+1}}–{{vm.sliceEnd}} of {{vm.filtered.length||0}}</span>\n</div>\n\n<div class=\"logs-table-wrap\">\n  <table class=\"logs\">\n    <thead>\n      <tr>\n        <th style=\"width:70px;\">A/A</th>\n        <th style=\"width:190px;\" ng-if=\"vm.cols.timestamp\">Timestamp</th>\n        <th style=\"width:80px;\" ng-if=\"vm.cols.level\">Level</th>\n        <th ng-if=\"vm.cols.message\">Message</th>\n        <th style=\"width:140px;\" ng-if=\"vm.cols.source\">Source</th>\n        <th style=\"width:120px;\" ng-if=\"vm.cols.node\">Agent</th>\n      </tr>\n    </thead>\n    <tbody>\n      <tr ng-repeat=\"log in vm.pageRows track by log.__k\">\n        <td class=\"mono\">{{log.line}}</td>\n        <td class=\"mono\" ng-if=\"vm.cols.timestamp\">{{log.timestamp}}</td>\n        <td class=\"mono level-{{log.level}}\" ng-if=\"vm.cols.level\">{{log.level}}</td>\n        <td ng-if=\"vm.cols.message\">\n          <div class=\"mono\" style=\"white-space:pre-wrap\">{{log.message}}</div>\n        </td>\n        <td class=\"mono\" ng-if=\"vm.cols.source\">{{log.source}}</td>\n        <td class=\"mono\" ng-if=\"vm.cols.node\">{{log.node}}</td>\n      </tr>\n      <tr ng-if=\"!vm.pageRows.length\">\n        <td\n          ng-attr-colspan=\"{{1 + (vm.cols.timestamp?1:0) + (vm.cols.level?1:0) + (vm.cols.message?1:0) + (vm.cols.source?1:0) + (vm.cols.node?1:0)}}\"\n          style=\"text-align:center;padding:16px;opacity:.7\">No rows</td>\n      </tr>\n    </tbody>\n  </table>\n</div>\n\n<script>\n  (function(scope){\n  var STORE_KEY = 'optimusdb_logs_table_v2';\n  function loadPrefs(){ try{ return JSON.parse(localStorage.getItem(STORE_KEY)||'{}'); }catch(e){ return {}; } }\n  function savePrefs(p){ try{ localStorage.setItem(STORE_KEY, JSON.stringify(p)); }catch(e){} }\n\n  scope.vm = {\n    raw: [], filtered: [], pageRows: [],\n    page: 1, pageSize: 20, totalPages: 1,\n    sliceStart: 0, sliceEnd: 0,\n    q: '', level: '', node: '', from: null, to: null,\n    errorsOnly: false,\n    levels: [], nodes: [],\n    cols: { timestamp:true, level:true, message:true, source:true, node:true },\n    _ms: function(ts){ try { return (new Date(ts)).getTime(); } catch(e){ return NaN; } },\n\n    clearFilters: function(){ this.q=''; this.level=''; this.node=''; this.from=null; this.to=null; this.errorsOnly=false; this.apply(); this._persist(); },\n    resetToFirst: function(){ this.page=1; this.apply(); this._persist(); },\n    toggleErrorsOnly: function(){ this.errorsOnly = !this.errorsOnly; this.apply(); this._persist(); },\n    first: function(){ this.page=1; this.slice(); this._persist(); },\n    prev: function(){ if(this.page>1){ this.page--; this.slice(); this._persist(); } },\n    next: function(){ if(this.page<this.totalPages){ this.page++; this.slice(); this._persist(); } },\n    last: function(){ this.page=this.totalPages||1; this.slice(); this._persist(); },\n    fixPage: function(){ if(this.page<1) this.page=1; if(this.page>this.totalPages) this.page=this.totalPages||1; this.slice(); this._persist(); },\n\n    apply: function(){\n      var q=(this.q||'').toLowerCase(); var lv=this.level||''; var nd=this.node||'';\n      var fromMs=this.from? new Date(this.from).getTime():null;\n      var toMs=this.to? new Date(this.to).getTime():null;\n      var errOnly=this.errorsOnly;\n\n      this.filtered = this.raw.filter(function(r){\n        if(lv && r.level !== lv) return false;\n        if(nd && r.node !== nd) return false;\n        if(errOnly && r.level !== 'ERROR') return false;\n        var rms = scope.vm._ms(r.timestamp)||0;\n        if(fromMs && rms < fromMs) return false;\n        if(toMs   && rms > toMs)   return false;\n        if(!q) return true;\n        var hay = ((r.message||'')+'\\n'+(r.source||'')+'\\n'+(r.node||'')+'\\n'+(r.level||'')).toLowerCase();\n        return hay.indexOf(q)!==-1;\n      });\n\n      this.page = 1; this.slice();\n    },\n\n    slice: function(){\n      var len=this.filtered.length||0;\n      this.totalPages = Math.max(1, Math.ceil(len/this.pageSize));\n      if(this.page>this.totalPages) this.page=this.totalPages;\n      var start=(this.page-1)*this.pageSize, end=Math.min(start+this.pageSize,len);\n      this.sliceStart=start; this.sliceEnd=end; this.pageRows=this.filtered.slice(start,end);\n      scope.$evalAsync();\n    },\n\n    exportCSV: function(which){\n      var rows = which==='page' ? this.pageRows : this.filtered;\n      var cols = ['line'];\n      if(this.cols.timestamp) cols.push('timestamp');\n      if(this.cols.level)     cols.push('level');\n      if(this.cols.message)   cols.push('message');\n      if(this.cols.source)    cols.push('source');\n      if(this.cols.node)      cols.push('node');\n\n      function esc(v){ if(v==null) return ''; var s=String(v).replace(/\"/g,'\"\"'); if(/[\",\\n]/.test(s)) return '\"'+s+'\"'; return s; }\n      var csv=[cols.join(',')];\n      rows.forEach(function(r){ csv.push(cols.map(function(c){return esc(r[c]);}).join(',')); });\n      var blob=new Blob([csv.join('\\n')],{type:'text/csv;charset=utf-8;'});\n      var url=URL.createObjectURL(blob);\n      var a=document.createElement('a');\n      a.href=url; a.download='optimus_logs_'+which+'_'+(new Date().toISOString().replace(/[:.]/g,'-'))+'.csv';\n      document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);\n    },\n\n    persistCols: function(){ this._persist(); },\n    _persist: function(){\n      var p={ q:this.q, level:this.level, node:this.node, from:this.from, to:this.to, pageSize:this.pageSize, page:this.page, errorsOnly:this.errorsOnly, cols:this.cols };\n      savePrefs(p);\n    },\n    _restore: function(){\n      var p=loadPrefs(); if(!p) return;\n      if(p.q!=null) this.q=p.q; if(p.level!=null) this.level=p.level; if(p.node!=null) this.node=p.node;\n      if(p.from!=null) this.from=p.from; if(p.to!=null) this.to=p.to;\n      if(p.pageSize!=null) this.pageSize=p.pageSize;\n      if(p.page!=null) this.page=p.page;\n      if(p.errorsOnly!=null) this.errorsOnly=p.errorsOnly;\n      if(p.cols) this.cols=p.cols;\n    }\n  };\n\n  function updateRows(rows){\n    if(!Array.isArray(rows)) rows=[];\n    for(var i=0;i<rows.length;i++){\n      var r=rows[i]; r.__k=(r.line||i)+':'+(r.timestamp||'')+':'+(r.node||'');\n    }\n    scope.vm.raw=rows;\n    var levelSet={}, nodeSet={};\n    rows.forEach(function(r){ if(r.level) levelSet[r.level]=1; if(r.node) nodeSet[r.node]=1; });\n    scope.vm.levels=Object.keys(levelSet).sort();\n    scope.vm.nodes=Object.keys(nodeSet).sort();\n\n    var prevPage=scope.vm.page; scope.vm.apply();\n    if(prevPage<=scope.vm.totalPages){ scope.vm.page=prevPage; scope.vm.slice(); }\n  }\n\n  scope.vm._restore();\n\n  scope.$watch('msg.payload', function(p){\n    if(!p) return;\n    var rows = Array.isArray(p) ? p : (p.agentLogs_flat || []);\n    updateRows(rows);\n  });\n})(scope);\n</script>",
+    "storeOutMessages": true,
+    "fwdInMessages": true,
+    "resendOnRefresh": true,
+    "templateScope": "local",
+    "className": "",
+    "x": 1880,
+    "y": 280,
+    "wires": [
+      []
+    ]
+  },
+  {
+    "id": "build_topology_api_fast",
+    "type": "function",
+    "z": "f78e40b03f9d5173",
+    "name": "Build Topology (+API, fast)",
+    "func": "// Input:  msg.payload.agentLogs_flat = [{ node, role, api?, message?, timestamp?, source? }, ...]\n// Output: msg.payload.topology = { agents:[{id,label,role,api,status}], apis:[{id,label,url}], edges:[{from,to,type}] }\n// Notes:\n//  - Marks agent online if seen in last 90s, else offline (kept so the graph stays stable)\n//  - Adds a yellow API box per agent + an 'API' edge\n//  - Infers Coordination edges: coordinator -> follower\n//  - Parses simple keywords in messages for Election / Replication / Query edges\n\nconst flat = (msg.payload && msg.payload.agentLogs_flat) || [];\nconst cache = context.get('agentCache') || {}; // { id: {role, api, lastSeen} }\nconst now = Date.now();\nconst ONLINE_WINDOW = 90 * 1000;  // 90s\n\n// helpers\nconst seen = new Set();\nconst agents = {};\nconst apis = {};   // by apiId (agentId+\"-api\")\nconst edges = [];\n\nfunction guessApiFromNode(id){\n  // e.g. node-18003 -> http://localhost:18003\n  const m = String(id).match(/(\\d{2,5})$/);\n  if (!m) return undefined;\n  return `http://localhost:${m[1]}`;\n}\n\n// 1) Collect agents from logs & cache\nfor (const row of flat) {\n  const id = row.node || 'unknown';\n  if (!id) continue;\n  const role = row.role || cache[id]?.role || 'Unknown';\n  const api = row.api || cache[id]?.api || row.source?.startsWith('http') ? row.source : undefined;\n\n  cache[id] = { role, api: api || cache[id]?.api, lastSeen: now };\n  agents[id] = {\n    id,\n    label: id,\n    role,\n    api: cache[id].api || api || guessApiFromNode(id),\n    status: 'online'\n  };\n  seen.add(id);\n}\n\n// keep recently seen agents from cache (up to 10 minutes)\nfor (const id of Object.keys(cache)) {\n  if (seen.has(id)) continue;\n  const age = now - (cache[id].lastSeen || 0);\n  if (age < 10 * 60 * 1000) {\n    agents[id] = {\n      id,\n      label: id,\n      role: cache[id].role || 'Unknown',\n      api: cache[id].api || guessApiFromNode(id),\n      status: age <= ONLINE_WINDOW ? 'online' : 'offline'\n    };\n  }\n}\n\n// 2) API nodes + edges\nfor (const id of Object.keys(agents)) {\n  const a = agents[id];\n  const apiLabel = 'API';\n  const apiUrl = a.api;\n  const apiId = `${id}-api`;\n  apis[apiId] = { id: apiId, label: apiLabel, url: apiUrl };\n  edges.push({ from: id, to: apiId, type: 'API' });\n}\n\n// 3) Baseline Coordination edges: Coordinator -> everyone else\nconst ids = Object.keys(agents);\nconst coordinators = ids.filter(i => /coordinator/i.test(agents[i].role || ''));\nconst followers = ids.filter(i => !/coordinator/i.test(agents[i].role || ''));\nfor (const c of coordinators) {\n  for (const f of followers) { if (c !== f) edges.push({ from: c, to: f, type: 'Coordination' }); }\n}\n\n// 4) Parse logs to add Election / Replication / Query edges\nfunction edgeKey(e){ return `${e.from}->${e.to}#${e.type}`; }\nconst dedup = new Set(edges.map(edgeKey));\n\nfor (const row of flat) {\n  const src = String(row.node || '');\n  const m = String(row.message || '').toLowerCase();\n  let mm;\n  // Election\n  mm = m.match(/vote\\s+for\\s+([\\w-:.]+)/); if (mm) { const to=mm[1]; const e={from:src,to,type:'Election'}; if(!dedup.has(edgeKey(e))){edges.push(e); dedup.add(edgeKey(e));}}\n  mm = m.match(/leader\\s*=\\s*([\\w-:.]+)/); if (mm) { const to=mm[1]; const e={from:src,to,type:'Election'}; if(!dedup.has(edgeKey(e))){edges.push(e); dedup.add(edgeKey(e));}}\n  // Replication\n  mm = m.match(/replicat\\w*\\s+(to|→)\\s+([\\w-:.]+)/); if (mm) { const to=mm[2]; const e={from:src,to,type:'Replication'}; if(!dedup.has(edgeKey(e))){edges.push(e); dedup.add(edgeKey(e));}}\n  mm = m.match(/replicat\\w*\\s+from\\s+([\\w-:.]+)/); if (mm) { const from=mm[1]; const e={from,to:src,type:'Replication'}; if(!dedup.has(edgeKey(e))){edges.push(e); dedup.add(edgeKey(e));}}\n  // Query\n  mm = m.match(/query\\s+(to|→)\\s+([\\w-:.]+)/); if (mm) { const to=mm[2]; const e={from:src,to,type:'Query'}; if(!dedup.has(edgeKey(e))){edges.push(e); dedup.add(edgeKey(e));}}\n  mm = m.match(/query\\s+from\\s+([\\w-:.]+)/); if (mm) { const from=mm[1]; const e={from,to:src,type:'Query'}; if(!dedup.has(edgeKey(e))){edges.push(e); dedup.add(edgeKey(e));}}\n}\n\n// 5) finalize & status\nfor (const id of Object.keys(agents)) {\n  const age = now - (cache[id]?.lastSeen || 0);\n  agents[id].status = age <= ONLINE_WINDOW ? 'online' : 'offline';\n}\n\n// 3b) Mesh edges: connect every pair of agents (undirected -> render as two directed for clarity)\nfor (let i = 0; i < ids.length; i++) {\n  for (let j = i + 1; j < ids.length; j++) {\n    const a = ids[i], b = ids[j];\n    edges.push({ from: a, to: b, type: 'Mesh' });\n    edges.push({ from: b, to: a, type: 'Mesh' });\n  }\n}\n\ncontext.set('agentCache', cache);\nmsg.payload = msg.payload || {};\nmsg.payload.topology = {\n  agents: Object.values(agents),\n  apis: Object.values(apis),\n  edges\n};\nreturn msg;",
+    "outputs": 1,
+    "timeout": "",
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 1930,
+    "y": 660,
+    "wires": [
+      [
+        "topology_view_graph_loader"
+      ]
+    ]
+  },
+  {
+    "id": "topology_view_graph_loader",
+    "type": "ui_template",
+    "z": "f78e40b03f9d5173",
+    "group": "cb0e236ca4eaa6b0",
+    "name": "Topology View (graph + loader)",
+    "order": 1,
+    "width": 0,
+    "height": 0,
+    "format": "<style>\n  #topo-shell{position:relative;background:#111;width:100%;height:calc(100vh - 120px)}\n  #topology-container{width:100%;height:100%}\n  #toolbar{display:flex;gap:8px;align-items:center;padding:6px;color:#ddd}\n  #toolbar input,#toolbar select{padding:6px 8px;border:1px solid #444;border-radius:8px;background:#1b1b1b;color:#ddd}\n  .btn{padding:6px 10px;border:1px solid #555;border-radius:8px;background:#1e1e1e;color:#ddd;cursor:pointer}\n  .btn.toggle.active{background:#2b6cb0;border-color:#2b6cb0}\n  /* Loader overlay */\n  #loader{position:absolute;inset:0;background:rgba(0,0,0,.55);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;color:#eee;z-index:5}\n  .progress{width:260px;height:8px;border-radius:6px;background:#333;overflow:hidden}\n  .progress > div{height:100%;width:0%;background:#2b6cb0;animation:bar 2s linear infinite}\n  @keyframes bar{0%{width:0%}50%{width:70%}100%{width:100%}}\n  .hidden{display:none}\n</style>\n<div id=\"toolbar\">\n  <label>Role</label>\n  <select ng-model=\"vm.role\" ng-change=\"vm.render()\"><option value=\"\">All</option><option>Coordinator</option><option>Follower</option><option>Unknown</option></select>\n  <label>Search</label>\n  <input ng-model=\"vm.q\" ng-change=\"vm.render()\" placeholder=\"node / api\">\n  <button class=\"btn toggle\" ng-class=\"{active: vm.showElection}\" ng-click=\"vm.toggle('Election')\">Election</button>\n  <button class=\"btn toggle\" ng-class=\"{active: vm.showReplication}\" ng-click=\"vm.toggle('Replication')\">Replication</button>\n  <button class=\"btn toggle\" ng-class=\"{active: vm.showQuery}\" ng-click=\"vm.toggle('Query')\">Query</button>\n  <button class=\"btn toggle\" ng-class=\"{active: vm.showCoordination}\" ng-click=\"vm.toggle('Coordination')\">Coordination</button>\n  <button class=\"btn\" ng-click=\"vm.fit()\">Fit</button>\n</div>\n<div id=\"topo-shell\">\n  <div id=\"topology-container\"></div>\n  <div id=\"loader\" class=\"hidden\">\n    <div>Preparing topology…</div>\n    <div class=\"progress\"><div></div></div>\n    <div style=\"font-size:12px;opacity:.8\">This hides automatically when the graph stabilizes</div>\n  </div>\n</div>\n<script src=\"https://unpkg.com/vis-network/standalone/umd/vis-network.min.js\"></script>\n<script>\n(function(scope){\n  var network, nodesDS, edgesDS;\n  var lastTopo = null;   // reuse last known data for instant render\n  var LOADER_TIMEOUT_MS = 2500; // don't wait forever\n  var loaderEl = null;\n\n  function showLoader(){ if(!loaderEl) loaderEl = document.getElementById('loader'); loaderEl.classList.remove('hidden'); }\n  function hideLoader(){ if(!loaderEl) loaderEl = document.getElementById('loader'); loaderEl.classList.add('hidden'); }\n\n  scope.vm = {\n    role:'', q:'', showElection:true, showReplication:true, showQuery:true, showCoordination:true,\n    toggle: function(t){ this['show'+t] = !this['show'+t]; this.render(); },\n    fit: function(){ if(network) network.fit({animation:{duration:250}}); },\n    render: function(){\n      var topo = scope._topo || lastTopo || {agents:[], apis:[], edges:[]};\n      lastTopo = topo; // cache\n      var q=(this.q||'').toLowerCase();\n      var role=this.role||'';\n\n      // Filter agents\n      var agents = topo.agents.filter(function(a){\n        if(role && a.role!==role) return false;\n        if(!q) return true;\n        var hay = (a.id+' '+(a.api||'')+' '+(a.role||'')).toLowerCase();\n        return hay.indexOf(q)!==-1;\n      });\n      var idOk = {}; agents.forEach(a=>idOk[a.id]=1);\n\n      // Build vis nodes for agents\n      var nodes = agents.map(function(a){\n        var isCoord = /coordinator/i.test(a.role||'');\n        var online = (a.status||'online')==='online';\n        return {\n          id: a.id,\n          label: a.id + (a.role? '\\n('+a.role+')' : ''),\n          color: online ? (isCoord ? '#00aaff' : '#cccccc') : '#666',\n          shape: 'ellipse', font:{color:'#fff'}, borderWidth: isCoord?2:1\n        };\n      });\n\n      // API nodes (always visible for filtered agents)\n      var apiNodes = (topo.apis||[]).filter(x=>idOk[x.id.replace(/-api$/, '')]).map(function(x){\n        return { id: x.id, label: (x.url? 'API\\n'+x.url : 'API'), shape:'box', color:'#ffaa00', font:{color:'#111', size:12} };\n      });\n\n      // Edge-type visibility\n      var edgeVisible = { Election:this.showElection, Replication:this.showReplication, Query:this.showQuery, Coordination:this.showCoordination, API:true };\n\n      var edges = (topo.edges||[]).filter(function(e){ return edgeVisible[e.type] && idOk[e.from?.replace(/-api$/,'')] && idOk[e.to?.replace(/-api$/,'')]; })\n        .map(function(e){\n          var color='#888', dashes=false; if(e.type==='Election') color='#00ff99'; if(e.type==='Replication') color='#ff6666'; if(e.type==='Query'){color='#ffaaee'; dashes=true;} if(e.type==='Coordination') color='#ffaa00'; if(e.type==='API') color='#ffaa00';\n          return { from:e.from, to:e.to, arrows:'to', color:{color:color}, dashes:dashes, width:1.2, label:e.type, font:{align:'middle', color:'#ddd'} };\n        });\n\n      // Also include API edges even if one endpoint is an API node\n      // (already covered since builder creates API edges from agent -> agent-api)\n\n      // datasets\n      if(!nodesDS){ nodesDS = new vis.DataSet(); edgesDS = new vis.DataSet(); }\n      nodesDS.update(nodes.concat(apiNodes));\n      // remove orphans\n      var wantIds = nodes.concat(apiNodes).map(n=>n.id);\n      nodesDS.getIds().forEach(function(id){ if(wantIds.indexOf(id)===-1) nodesDS.remove(id); });\n      edgesDS.clear(); edgesDS.add(edges);\n\n      // create/update network\n      var container = document.getElementById('topology-container');\n      if(!network){\n        network = new vis.Network(container, {nodes:nodesDS, edges:edgesDS}, {\n          layout:{improvedLayout:true},\n          physics:{ solver:'forceAtlas2Based', forceAtlas2Based:{ gravitationalConstant:-50, springLength:250, springConstant:0.06 }, stabilization:{iterations:120} },\n          nodes:{ font:{size:16} },\n          edges:{ smooth:{type:'dynamic'} }\n        });\n        network.on('stabilizationIterationsDone', function(){ hideLoader(); });\n        network.on('afterDrawing', function(){ /* safety */ });\n        // open API on double-click of API node\n        network.on('doubleClick', function(params){\n          if(!params || !params.nodes || !params.nodes.length) return;\n          var nid = params.nodes[0];\n          if(/-api$/.test(nid)){\n            var api = (topo.apis||[]).find(x=>x.id===nid);\n            if(api && api.url){ window.open(api.url, '_blank'); }\n          }\n        });\n      } else {\n        network.setData({nodes:nodesDS, edges:edgesDS});\n      }\n\n      if(wantIds.length){ network.fit({animation:{duration:200}}); }\n    }\n  };\n\n  function apply(topo){\n    // Immediately render what we have (or last snapshot), show loader briefly\n    showLoader();\n    clearTimeout(scope._loaderTimer);\n    scope._loaderTimer = setTimeout(hideLoader, LOADER_TIMEOUT_MS); // safety timeout\n\n    scope._topo = topo; // store latest\n    scope.vm.render();\n  }\n\n  scope.$watch('msg.payload', function(p){\n    var topo = p && (p.topology || p);\n    if(topo && topo.agents){ apply(topo); }\n    else { // no payload – still render last known and hide loader soon\n      showLoader();\n      clearTimeout(scope._loaderTimer);\n      scope._loaderTimer = setTimeout(function(){ hideLoader(); scope.vm.render(); }, LOADER_TIMEOUT_MS);\n    }\n  });\n})(scope);\n</script>",
+    "storeOutMessages": true,
+    "fwdInMessages": true,
+    "resendOnRefresh": true,
+    "templateScope": "local",
+    "className": "",
+    "x": 2210,
+    "y": 660,
+    "wires": [
+      []
+    ]
+  },
+  {
+    "id": "a0c3e0f38d2c9a11",
+    "type": "function",
+    "z": "f78e40b03f9d5173",
+    "name": "Ensure all agents (8 placeholders)",
+    "func": "// Guarantees node-18001..node-18008 appear on each tick, even with no logs\n// Input:  msg.payload.agentLogs_flat (array)\n// Output: msg.payload.agentLogs_flat (augmented)\nconst flat = Array.isArray(msg.payload?.agentLogs_flat) ? msg.payload.agentLogs_flat : [];\nconst have = new Set(flat.map(r => r.node));\nconst ports = [18001,18002,18003,18004,18005,18006,18007,18008];\nconst now = new Date().toISOString();\n\nconst fillers = ports\n  .map(p => `node-${p}`)\n  .filter(id => !have.has(id))\n  .map(id => ({\n    line: -1,\n    timestamp: now,\n    level: 'INFO',\n    message: '(no logs yet)',\n    source: '',\n    node: id,\n    cpu: 0,\n    mem: 0,\n    latency: 0,\n    health: 0,\n    replication: 0,\n    io: 0,\n    queryRate: 0,\n    role: 'Unknown'\n  }));\n\nmsg.payload = msg.payload || {};\nmsg.payload.agentLogs_flat = flat.concat(fillers);\nreturn msg;",
+    "outputs": 1,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 1580,
+    "y": 700,
+    "wires": [
+      [
+        "2d7f1d4b8a1bd932",
+        "build_topology_api_fast"
+      ]
+    ]
+  },
+  {
+    "id": "2d7f1d4b8a1bd932",
+    "type": "function",
+    "z": "f78e40b03f9d5173",
+    "name": "Build Agent Cards (latest per node)",
+    "func": "// From agentLogs_flat, keep the latest row per node (for cards)\nconst rows = Array.isArray(msg.payload?.agentLogs_flat) ? msg.payload.agentLogs_flat : [];\nconst latest = {};\nfor (const r of rows) { latest[r.node] = r; }\nmsg.payload = { cards: Object.values(latest) };\nreturn msg;",
+    "outputs": 1,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 1900,
+    "y": 720,
+    "wires": [
+      [
+        "a2e2f6e7191d1c60"
+      ]
+    ]
+  },
+  {
+    "id": "a2e2f6e7191d1c60",
+    "type": "ui_template",
+    "z": "f78e40b03f9d5173",
+    "group": "f3b6b2357c764a3d",
+    "name": "Agents – Dynamic Cards",
+    "order": 1,
+    "width": 24,
+    "height": 10,
+    "format": "<style>\n  .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:12px}\n  .card{background:#111;border:1px solid #333;border-radius:12px;padding:12px;color:#ddd}\n  .head{display:flex;justify-content:space-between;gap:8px;margin-bottom:6px}\n  .name{font-weight:700}\n  .role{opacity:.75}\n  .row{display:flex;justify-content:space-between;font-size:12px;margin:2px 0}\n  .ok{color:#00c853}.warn{color:#f9a825}.bad{color:#e53935}\n  .tiny{font-size:11px;opacity:.8}\n</style>\n<div class=\"grid\" ng-if=\"msg.payload && msg.payload.cards\">\n  <div class=\"card\" ng-repeat=\"a in msg.payload.cards | orderBy:'node'\">\n    <div class=\"head\">\n      <div><span class=\"name\">{{a.node}}</span> <span class=\"role\">({{a.role||'Unknown'}})</span></div>\n      <div class=\"tiny\">{{a.timestamp | date:'mediumTime'}}</div>\n    </div>\n    <div class=\"row\"><span>CPU</span><span>{{a.cpu|number:1}}%</span></div>\n    <div class=\"row\"><span>MEM</span><span>{{a.mem|number:1}}%</span></div>\n    <div class=\"row\"><span>Latency</span><span>{{a.latency|number:0}} ms</span></div>\n    <div class=\"row\"><span>Health</span>\n      <span ng-class=\"{'ok':a.health>=85,'warn':a.health>=65&&a.health<85,'bad':a.health<65}\">{{a.health|number:0}}%</span>\n    </div>\n    <div class=\"tiny\" ng-if=\"a.source\">src: {{a.source}}</div>\n  </div>\n</div>\n",
+    "storeOutMessages": true,
+    "fwdInMessages": true,
+    "resendOnRefresh": true,
+    "templateScope": "local",
+    "className": "",
+    "x": 2190,
+    "y": 720,
+    "wires": [
+      []
+    ]
+  },
+  {
     "id": "dashboard_group",
     "type": "ui_group",
     "name": "Agents Timeline of Events",
@@ -2915,6 +3216,57 @@
     "className": ""
   },
   {
+    "id": "grp_status",
+    "type": "ui_group",
+    "name": "Status Grid",
+    "tab": "ui_tab_opsx",
+    "order": 1,
+    "disp": true,
+    "width": 24,
+    "collapse": false
+  },
+  {
+    "id": "grp_scatter",
+    "type": "ui_group",
+    "name": "CPU vs Latency",
+    "tab": "ui_tab_opsx",
+    "order": 2,
+    "disp": true,
+    "width": 12,
+    "collapse": false
+  },
+  {
+    "id": "grp_errspark",
+    "type": "ui_group",
+    "name": "Error Sparkline",
+    "tab": "ui_tab_opsx",
+    "order": 3,
+    "disp": true,
+    "width": 12,
+    "collapse": false
+  },
+  {
+    "id": "grp_heatmap",
+    "type": "ui_group",
+    "name": "CPU Heatmap",
+    "tab": "ui_tab_opsx",
+    "order": 4,
+    "disp": true,
+    "width": 24,
+    "collapse": false
+  },
+  {
+    "id": "f3b6b2357c764a3d",
+    "type": "ui_group",
+    "name": "Agents (Dynamic Cards)",
+    "tab": "5fead54e98583d5c",
+    "order": 0,
+    "disp": true,
+    "width": 24,
+    "collapse": false,
+    "className": ""
+  },
+  {
     "id": "072343ae4ed21cf8",
     "type": "ui_tab",
     "name": "OptimusDB Agents Log Timeline",
@@ -2934,6 +3286,14 @@
     "id": "207eb57fbe40c775",
     "type": "ui_tab",
     "name": "Agent Topology View",
+    "icon": "dashboard",
+    "disabled": false,
+    "hidden": false
+  },
+  {
+    "id": "ui_tab_opsx",
+    "type": "ui_tab",
+    "name": "Ops Extras",
     "icon": "dashboard",
     "disabled": false,
     "hidden": false

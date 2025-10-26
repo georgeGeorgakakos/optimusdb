@@ -1,4 +1,4 @@
-package query
+package queryengine
 
 import (
 	"context"
@@ -17,7 +17,7 @@ type OptimizedEngine struct {
 
 // NewOptimizedEngine creates an optimized query engine
 func NewOptimizedEngine(maxWorkers int, timeout time.Duration, cacheTTL time.Duration) *OptimizedEngine {
-	log.Printf("[ENGINE] Initializing optimized query engine: workers=%d, timeout=%v, cacheTTL=%v",
+	log.Printf("[WORKER-POOL] Initializing optimized query engine: workers=%d, timeout=%v, cacheTTL=%v",
 		maxWorkers, timeout, cacheTTL)
 
 	return &OptimizedEngine{
@@ -38,7 +38,7 @@ func (oe *OptimizedEngine) Query(
 
 	// Check cache first
 	if cached, found := oe.cache.Get(criteria); found {
-		log.Printf("[ENGINE] Query completed from cache in %v", time.Since(start))
+		log.Printf("[WORKER-POOL] Query completed from cache in %v", time.Since(start))
 		return cached, nil
 	}
 
@@ -52,14 +52,20 @@ func (oe *OptimizedEngine) Query(
 	}
 
 	if len(peers) == 0 {
-		log.Println("[ENGINE] No peers available for query")
+		log.Println("[WORKER-POOL] No peers available for query")
 		return []map[string]interface{}{}, nil
 	}
 
-	log.Printf("[ENGINE] Querying %d peers with worker pool...", len(peers))
+	log.Printf("[WORKER-POOL] Querying %d peers with worker pool (self=%s)...", len(peers), selfID.String()[:8])
 
-	// Query peers with worker pool
-	results, err := oe.workerPool.QueryWithWorkerPool(ctx, hostNode, criteria, peers)
+	// Query peers with worker pool - NOW PASSING selfID!
+	results, err := oe.workerPool.QueryWithWorkerPool(
+		ctx,
+		hostNode,
+		selfID.Pretty(), // Convert peer.ID to string for trace path
+		criteria,
+		peers,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -69,7 +75,7 @@ func (oe *OptimizedEngine) Query(
 		oe.cache.Set(criteria, results)
 	}
 
-	log.Printf("[ENGINE] Query completed in %v, found %d results", time.Since(start), len(results))
+	log.Printf("[WORKER-POOL] Query completed in %v, found %d results", time.Since(start), len(results))
 
 	return results, nil
 }

@@ -1315,3 +1315,6 @@ OptimusDB demonstrates a sophisticated implementation of distributed database co
 ---
 
 *End of Technical Deep Dive*
+**© 2025 OptimusDB Research Team**
+**License**: MPL 2.0
+**Repository**: https://github.com/georgegeorgakakos/optimusdb

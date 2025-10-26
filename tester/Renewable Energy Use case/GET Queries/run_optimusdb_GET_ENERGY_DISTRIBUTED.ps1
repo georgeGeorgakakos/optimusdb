@@ -1,5 +1,6 @@
 # Distributed OptimusDB query tester with CSV logging (18001–18008)
 # Logs all results in query_results_log.csv
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
 
 $Ports = 18001..18008
 $ContentType = "application/json"

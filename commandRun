@@ -5,13 +5,11 @@ docker build --no-cache -t optimusdb .
 docker run -d --network=swarmnet --name=optimusdb1 -p 18001:8089 -p 14001:4001 -p 15001:5001 optimusdb
 docker run -d --network=swarmnet --name=optimusdb2 -p 18002:8089 -p 14002:4001 -p 15002:5001 optimusdb
 docker run -d --network=swarmnet --name=optimusdb3 -p 18003:8089 -p 14003:4001 -p 15003:5001 optimusdb
-
-docker run -d --network=swarmnet --name=optimusdb4 -p 18004:8090 -p 14004:4001 -p 15004:5001 optimusdb
-docker run -d --network=swarmnet --name=optimusdb5 -p 18005:8090 -p 14005:4001 -p 15005:5001 optimusdb
-docker run -d --network=swarmnet --name=optimusdb6 -p 18006:8090 -p 14006:4001 -p 15006:5001 optimusdb
-
-docker run -d --network=swarmnet --name=optimusdb7 -p 18007:8090 -p 14007:4001 -p 15007:5001 optimusdb
-docker run -d --network=swarmnet --name=optimusdb8 -p 18008:8090 -p 14008:4001 -p 15008:5001 optimusdb
+docker run -d --network=swarmnet --name=optimusdb4 -p 18004:8089 -p 14004:4001 -p 15004:5001 optimusdb
+docker run -d --network=swarmnet --name=optimusdb5 -p 18005:8089 -p 14005:4001 -p 15005:5001 optimusdb
+docker run -d --network=swarmnet --name=optimusdb6 -p 18006:8089 -p 14006:4001 -p 15006:5001 optimusdb
+docker run -d --network=swarmnet --name=optimusdb7 -p 18007:8089 -p 14007:4001 -p 15007:5001 optimusdb
+docker run -d --network=swarmnet --name=optimusdb8 -p 18008:8089 -p 14008:4001 -p 15008:5001 optimusdb
 
 
 
@@ -319,5 +317,14 @@ sqlite3 -header -column "$DB" "
  2452  sudo ./emsInterogateV2.sh --sql "SELECT id,received_at,topic,substr(raw_json,1,200) AS raw FROM ems_events ORDER BY id DESC LIMIT 20;"
 
 
+########################################################################################################################
+####    Commands to upload to Git
+####
+
+#This confirms what’s changed:
+git status
+
+# Add all changes
+git add .
 
 
