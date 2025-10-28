@@ -73,8 +73,8 @@ func handleQueryStream(stream network.Stream, db *KnowledgeBaseDB) {
 			}
 		}
 	}
-	self := db.Node.Identity.Pretty()
-	if contains(tracePath, self) { // loop prevention
+	self := db.Node.Identity.String() //Pretty()
+	if contains(tracePath, self) {    // loop prevention
 		log.Printf("[PEER-QUERY] loop prevented id=%s path=%v", traceID, tracePath)
 		_ = json.NewEncoder(stream).Encode([]map[string]interface{}{})
 		return
@@ -327,7 +327,7 @@ func queryPeersLimited(
 
 	for _, p := range allConnected {
 		allPeers = append(allPeers, p)
-		seen[p.Pretty()] = true
+		seen[p.String()] = true //Pretty()
 	}
 	for _, peerIDStr := range discoveredPeerIDs {
 		if !seen[peerIDStr] {
@@ -361,14 +361,14 @@ func queryPeersLimited(
 	for _, pid := range peers {
 		go func(p peer.ID) {
 			// skip loops
-			if contains(tracePath, p.Pretty()) {
+			if contains(tracePath, p.String()) { //Pretty()
 				ch <- peerChunk{nil, nil}
 				return
 			}
 
 			// skip if not already connected (we don't have address info for discovered peers)
 			if db.Node.PeerHost.Network().Connectedness(p) != network.Connected {
-				log.Printf("[QUERY] Skipping unconnected peer %s (no address info)", p.Pretty())
+				log.Printf("[QUERY] Skipping unconnected peer %s (no address info)", p.String()) //Pretty()
 				ch <- peerChunk{nil, nil}
 				return
 			}
@@ -384,7 +384,7 @@ func queryPeersLimited(
 			req := map[string]interface{}{
 				"criteria":   criteria,
 				"trace_id":   traceID,
-				"trace_path": append(tracePath, db.Node.Identity.Pretty()),
+				"trace_path": append(tracePath, db.Node.Identity.String()), //Pretty()
 				"options": map[string]interface{}{
 					"strategy":        "LOCAL_ONLY",
 					"include_local":   true,
@@ -408,14 +408,14 @@ func queryPeersLimited(
 				if _, ok := r["_source"]; !ok {
 					r["_source"] = map[string]interface{}{
 						"type":    "peer",
-						"peer_id": p.Pretty(),
-						"path":    append(tracePath, db.Node.Identity.Pretty()),
+						"peer_id": p.String(),                                   //Pretty()
+						"path":    append(tracePath, db.Node.Identity.String()), //Pretty()
 					}
 				}
 				if _, ok := r["_trace"]; !ok {
 					r["_trace"] = map[string]interface{}{
 						"id":   traceID,
-						"path": append(tracePath, db.Node.Identity.Pretty()),
+						"path": append(tracePath, db.Node.Identity.String()),
 					}
 				}
 			}
@@ -458,13 +458,13 @@ func queryPeersUntilQuorum(ctx context.Context, db *KnowledgeBaseDB, criteria []
 
 	for _, pid := range allPeers {
 		go func(p peer.ID) {
-			if contains(tracePath, p.Pretty()) {
-				ch <- peerResp{pid: p.Pretty(), rows: nil, err: nil}
+			if contains(tracePath, p.String()) {
+				ch <- peerResp{pid: p.String(), rows: nil, err: nil}
 				return
 			}
 			stream, err := db.Node.PeerHost.NewStream(ctx, p, "/query/1.0.0")
 			if err != nil {
-				ch <- peerResp{pid: p.Pretty(), rows: nil, err: err}
+				ch <- peerResp{pid: p.String(), rows: nil, err: err}
 				return
 			}
 			defer stream.Close()
@@ -472,7 +472,7 @@ func queryPeersUntilQuorum(ctx context.Context, db *KnowledgeBaseDB, criteria []
 			req := map[string]interface{}{
 				"criteria":   criteria,
 				"trace_id":   traceID,
-				"trace_path": append(tracePath, db.Node.Identity.Pretty()),
+				"trace_path": append(tracePath, db.Node.Identity.String()),
 				"options": map[string]interface{}{
 					"strategy":        "LOCAL_ONLY",
 					"include_local":   true,
@@ -480,21 +480,21 @@ func queryPeersUntilQuorum(ctx context.Context, db *KnowledgeBaseDB, criteria []
 				},
 			}
 			if err := json.NewEncoder(stream).Encode(req); err != nil {
-				ch <- peerResp{pid: p.Pretty(), rows: nil, err: err}
+				ch <- peerResp{pid: p.String(), rows: nil, err: err}
 				return
 			}
 
 			var rows []map[string]interface{}
 			if err := json.NewDecoder(stream).Decode(&rows); err != nil {
-				ch <- peerResp{pid: p.Pretty(), rows: nil, err: err}
+				ch <- peerResp{pid: p.String(), rows: nil, err: err}
 				return
 			}
 			tagRows(rows, map[string]interface{}{
 				"type":    "peer",
-				"peer_id": p.Pretty(),
-				"path":    append(tracePath, db.Node.Identity.Pretty()),
-			}, traceID, append(tracePath, db.Node.Identity.Pretty()))
-			ch <- peerResp{pid: p.Pretty(), rows: rows, err: nil}
+				"peer_id": p.String(),
+				"path":    append(tracePath, db.Node.Identity.String()),
+			}, traceID, append(tracePath, db.Node.Identity.String()))
+			ch <- peerResp{pid: p.String(), rows: rows, err: nil}
 		}(pid)
 	}
 

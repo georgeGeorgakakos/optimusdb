@@ -56,13 +56,13 @@ func (oe *OptimizedEngine) Query(
 		return []map[string]interface{}{}, nil
 	}
 
-	log.Printf("[WORKER-POOL] Querying %d peers with worker pool (self=%s)...", len(peers), selfID.String()[:8])
+	log.Printf("[WORKER-POOL] Querying %d peers with worker pool (self=%s)...", len(peers), selfID.String())
 
 	// Query peers with worker pool - NOW PASSING selfID!
 	results, err := oe.workerPool.QueryWithWorkerPool(
 		ctx,
 		hostNode,
-		selfID.Pretty(), // Convert peer.ID to string for trace path
+		selfID.String(), // <- replaced Pretty() with String()
 		criteria,
 		peers,
 	)

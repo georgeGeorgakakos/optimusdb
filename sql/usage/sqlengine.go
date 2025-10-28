@@ -45,6 +45,7 @@ type Resource struct {
 }
 
 // Metadata represents the metadata table
+/*
 type DataCatalog struct {
 	ID               string `gorm:"primaryKey"`
 	Author           string
@@ -66,4 +67,38 @@ type DataCatalog struct {
 	SLAConstraints   string `gorm:"type:json"`
 	OwnershipDetails string `gorm:"type:json"`
 	AuditTrail       string `gorm:"type:json"`
+}
+
+*/
+// Metadata represents the metadata table
+type DataCatalog struct {
+	ID               string `gorm:"primaryKey"`
+	Author           string
+	MetadataType     string
+	Component        string
+	Behaviour        string
+	Relationships    string
+	AssociatedID     string
+	Name             string
+	Description      string
+	Tags             []string `gorm:"type:text[]"`
+	Status           string
+	CreatedBy        string
+	CreatedAt        time.Time
+	UpdatedAt        time.Time
+	RelatedIDs       []string `gorm:"type:text[]"`
+	Priority         string
+	SchedulingInfo   string `gorm:"type:json"`
+	SLAConstraints   string `gorm:"type:json"`
+	OwnershipDetails string `gorm:"type:json"`
+	AuditTrail       string `gorm:"type:json"`
+
+	// ADD CONTEXTUAL METADATA FIELDS
+	ContextualPurpose     string   `gorm:"type:text"`
+	ContextualVariables   []string `gorm:"type:text[]"`
+	ContextualKeywords    []string `gorm:"type:text[]"`
+	ContextualDataType    string
+	ContextualDescription string   `gorm:"type:text"`
+	ContextualUnits       []string `gorm:"type:text[]"`
+	ContextualGeneratedAt time.Time
 }

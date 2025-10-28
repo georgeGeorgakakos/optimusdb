@@ -10,7 +10,7 @@ import (
 
 	optimusdbConf "optimusdb/config"
 
-	"github.com/ipfs/kubo/config"
+	config "github.com/ipfs/kubo/config"
 	"github.com/ipfs/kubo/core"
 	kubolibp2p "github.com/ipfs/kubo/core/node/libp2p"
 	"github.com/ipfs/kubo/plugin/loader" // This package is needed so that all the preloaded plugins are loaded automatically

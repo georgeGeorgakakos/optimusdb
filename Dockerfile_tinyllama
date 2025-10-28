@@ -1,0 +1,95 @@
+# ================================================
+# 🏗 OPTION 2: OptimusDB WITH TinyLlama (FINAL FIX)
+# Fixes: Proper library linking and symbol resolution
+# ================================================
+FROM golang:1.23 AS builder
+WORKDIR /optimusdbKB
+
+# Install dependencies
+RUN apt-get update && apt-get install -y \
+    sqlite3 libsqlite3-dev \
+    gcc g++ make cmake \
+    wget curl git build-essential pkg-config file rsync \
+ && rm -rf /var/lib/apt/lists/*
+
+# Build llama.cpp with proper flags
+RUN git clone https://github.com/go-skynet/go-llama.cpp.git /workspace/go-llama-cpp && \
+    cd /workspace/go-llama-cpp && \
+    git checkout 6a8041ef6b46 && \
+    git submodule update --init --recursive && \
+    echo "Building with C++11 support..." && \
+    make libbinding.a CXXFLAGS="-std=c++11 -fPIC" && \
+    ls -lh libbinding.a
+
+# Copy headers to root
+RUN cd /workspace/go-llama-cpp && \
+    find llama.cpp -name "*.h" -exec cp {} . \; 2>/dev/null || true && \
+    ls -la *.h | head -10
+
+# Download model
+RUN mkdir -p /models && \
+    wget -q --show-progress \
+        https://huggingface.co/TheBloke/TinyLlama-1.1B-Chat-v1.0-GGUF/resolve/main/tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf \
+        -O /models/tinyllama-1.1b.gguf
+
+# Copy Go files
+COPY go.mod go.sum ./
+
+# Configure go.mod
+RUN printf '\nreplace github.com/go-skynet/go-llama.cpp => /workspace/go-llama-cpp\n' >> go.mod && \
+    printf 'replace github.com/quic-go/quic-go => github.com/quic-go/quic-go v0.40.1\n' >> go.mod && \
+    printf 'replace github.com/quic-go/webtransport-go => github.com/quic-go/webtransport-go v0.6.0\n' >> go.mod
+
+# Copy source code
+COPY . .
+
+# Clean and download
+RUN go clean -modcache && \
+    go mod tidy && \
+    go mod download && \
+    go mod vendor
+
+# Configure CGO with proper C++ linking
+ENV CGO_ENABLED=1
+ENV CGO_CFLAGS="-I/workspace/go-llama-cpp"
+ENV CGO_CXXFLAGS="-std=c++11"
+ENV CGO_LDFLAGS="-L/workspace/go-llama-cpp -lbinding -lstdc++ -lm -lpthread -ldl"
+ENV LD_LIBRARY_PATH="/workspace/go-llama-cpp:$LD_LIBRARY_PATH"
+
+# Build
+RUN echo "Building OptimusDB..." && \
+    GOOS=linux GOARCH=amd64 CGO_ENABLED=1 \
+    go build -v -tags=llama -ldflags="-w -s" -o /optimusdbKB/optimusdb ./main.go 2>&1 | tee /tmp/build.log; \
+    if [ ${PIPESTATUS[0]} -eq 0 ]; then \
+        echo "✅ BUILD SUCCEEDED!"; \
+        ls -lh /optimusdbKB/optimusdb; \
+        file /optimusdbKB/optimusdb; \
+    else \
+        echo "❌ BUILD FAILED!"; \
+        echo ""; \
+        echo "===== ERRORS ====="; \
+        grep -i "error\|fatal\|undefined" /tmp/build.log | tail -50; \
+        exit 1; \
+    fi
+
+# Runtime
+FROM ubuntu:22.04
+WORKDIR /root/
+
+RUN apt-get update && apt-get install -y \
+    sqlite3 libsqlite3-dev libstdc++6 ca-certificates \
+    wget curl figlet net-tools htop procps \
+    fontconfig fonts-dejavu \
+ && fc-cache -fv && rm -rf /var/lib/apt/lists/*
+
+COPY --from=builder /models/tinyllama-1.1b.gguf /root/models/tinyllama-1.1b.gguf
+COPY --from=builder /optimusdbKB/optimusdb /root/optimusdb
+
+ENV MODEL_PATH=/root/models/tinyllama-1.1b.gguf
+ENV LOG_LEVEL=info
+
+EXPOSE 8089 4001 5001
+
+RUN chmod +x /root/optimusdb
+
+CMD ["/root/optimusdb"]

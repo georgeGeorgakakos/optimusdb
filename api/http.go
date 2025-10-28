@@ -181,6 +181,125 @@ func uploadTOSCAHandler(optimusdb *app.KnowledgeBaseDB) http.HandlerFunc {
 		sourcePod := os.Getenv("POD_NAME") // set by Kubernetes downward API in your manifest
 		sourceIP, _ := getLocalIPAddress() // your helper already exists
 
+		// (D) Insert into SQLite with contextual metadata generation
+		if err := app.GlobalKBSQLite.InsertTOSCAMetadata(
+			templateID,
+			description,
+			nodeCount,
+			filename,
+			filesize,
+			sha,
+			ipfsPath,
+			uploader,
+			sourcePod,
+			sourceIP,
+		); err != nil {
+			sendErrorResponse(w, http.StatusInternalServerError, fmt.Sprintf("Failed to index metadata: %v", err))
+			return
+		}
+
+		// 6) Respond
+		sendSuccessResponse(w, map[string]interface{}{
+			"message":     "TOSCA uploaded successfully",
+			"template_id": templateID,
+			"node_count":  nodeCount,
+			"filename":    filename,
+			"filesize":    filesize,
+			"sha256":      sha,
+		})
+	}
+}
+
+/*
+func uploadTOSCAHandler(optimusdb *app.KnowledgeBaseDB) http.HandlerFunc {
+	type UploadRequest struct {
+		File     string `json:"file"`               // Base64-encoded TOSCA YAML
+		Filename string `json:"filename,omitempty"` // optional
+	}
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			sendErrorResponse(w, http.StatusMethodNotAllowed, "Only POST is allowed")
+			return
+		}
+
+		var req UploadRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.File == "" {
+			sendErrorResponse(w, http.StatusBadRequest, "Invalid JSON payload")
+			return
+		}
+
+		// 1) Base64 decode
+		decoded, err := base64.StdEncoding.DecodeString(req.File)
+		if err != nil {
+			sendErrorResponse(w, http.StatusBadRequest, "Base64 decoding failed")
+			return
+		}
+
+		// 2) Parse TOSCA
+		tmpl, err := tosca.ParseTOSCA(decoded)
+		if err != nil {
+			sendErrorResponse(w, http.StatusBadRequest, fmt.Sprintf("TOSCA parse error: %v", err))
+			return
+		}
+
+		// 3) Compute IDs / counts
+		templateID := tosca.ComputeTemplateID(decoded)
+		nodeCount := tosca.CountNodeTemplates(tmpl)
+		description := tmpl.Description
+
+		// 4) Persist ORIGINAL YAML to OrbitDB (e.g., DsTOSCA_Imported)
+		if optimusdb.DsTOSCA_Imported == nil {
+			sendErrorResponse(w, http.StatusInternalServerError, "TOSCA store not initialized")
+			return
+		}
+		ctx := r.Context()
+		doc := map[string]interface{}{
+			"_id":         templateID,
+			"type":        "tosca_template",
+			"description": description,
+			"nodeCount":   nodeCount,
+			"yaml":        string(decoded),
+			"createdAt":   time.Now().UTC().Format(time.RFC3339),
+		}
+		if _, err := (*optimusdb.DsTOSCA_Imported).Put(ctx, doc); err != nil {
+			sendErrorResponse(w, http.StatusInternalServerError, fmt.Sprintf("Failed to persist to OrbitDB: %v", err))
+			return
+		}
+
+		// 5) Index lightweight metadata into SQLite
+		if app.GlobalKBSQLite == nil {
+			sendErrorResponse(w, http.StatusInternalServerError, "SQLite not initialized")
+			return
+		}
+
+		// (B) Also add the raw YAML blob to IPFS to get a stable content path (ipfsPath)
+		var ipfsPath string
+		if optimusdb.Orbit != nil {
+			coreAPI := (*optimusdb.Orbit).IPFS()
+			nd := files.NewBytesFile(decoded)
+			p, err := coreAPI.Unixfs().Add(ctx, nd)
+			if err == nil {
+				ipfsPath = p.String() // e.g., /ipfs/<CID>
+			} // if it fails, we'll just leave ipfsPath empty
+		}
+
+		filename := req.Filename
+		if filename == "" {
+			filename = "unknown"
+		}
+		filesize := int64(len(decoded))
+
+		// compute sha256
+		sum := sha256.Sum256(decoded)
+		sha := fmt.Sprintf("%x", sum[:])
+
+		uploader := r.Header.Get("X-User") // optional: caller can set this
+		if uploader == "" {
+			uploader = app.GetAgentName() // fallback to your agent name
+		}
+		sourcePod := os.Getenv("POD_NAME") // set by Kubernetes downward API in your manifest
+		sourceIP, _ := getLocalIPAddress() // your helper already exists
+
 		// (D) Insert into SQLite with the new signature
 		if err := app.GlobalKBSQLite.InsertTOSCAMetadata(
 			templateID,
@@ -209,6 +328,8 @@ func uploadTOSCAHandler(optimusdb *app.KnowledgeBaseDB) http.HandlerFunc {
 		})
 	}
 }
+
+*/
 
 /*
 func uploadTOSCAHandler(optimusdb *app.KnowledgeBaseDB) http.HandlerFunc {

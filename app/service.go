@@ -209,76 +209,6 @@ func Service(knowledgeBaseDB *KnowledgeBaseDB,
 			logChan <- Log{Info, "Connecting to " + peerId}
 			res = connect(knowledgeBaseDB, peerId, logChan)
 
-		/* //25102025
-		case strings.ToLower(QUERY.Cmd):
-			logChan <- Log{Info, "Received service request: QUERY"}
-			fmt.Printf("\nReceived service request: %s : ", QUERY.Cmd)
-
-			localResults, err := queryLocalDB(knowledgeBaseDB, req.Criteria)
-			if err != nil {
-				logChan <- Log{Type: Info, Data: fmt.Sprintf("QUERY: ERROR querying local DB: %v", err)}
-			} else if len(localResults) > 0 {
-				logChan <- Log{Type: Info, Data: fmt.Sprintf("QUERY: Found %d records locally", len(localResults))}
-				res = localResults
-				break // Return immediately if found
-			}
-
-			// If not found locally, query peers via Libp2p
-			logChan <- Log{Type: Info, Data: "QUERY: Data not found locally, querying peers..."}
-			//peerResults, err := queryPeers(knowledgeBaseDB, req.Criteria)
-			peerResults, err := queryPeers(knowledgeBaseDB, req.Criteria)
-			peerResults = dedupResults(peerResults)
-			if err != nil {
-				logChan <- Log{Type: Info, Data: fmt.Sprintf("QUERY: ERROR querying peers: %v", err)}
-				res = "ERROR! Failed to retrieve records from peers"
-				break
-			}
-			if len(peerResults) > 0 {
-				logChan <- Log{Type: Info, Data: fmt.Sprintf("QUERY: Received %d records from peers", len(peerResults))}
-				storeResults(knowledgeBaseDB, logChan, req.DSType, peerResults)
-				// Return the results to the client
-				res = peerResults
-			} else {
-				logChan <- Log{Type: Info, Data: "QUERY: No data found in local or peer network"}
-				res = "No records found"
-			}
-
-		*/ //25102025
-
-		////////////////////////////////
-
-		/** Working 1st ex for decentratlization Query 25.10.2025
-		case strings.ToLower(QUERY.Cmd):
-			logChan <- Log{Info, "Received service request: QUERY"}
-			fmt.Printf("\nReceived service request: %s : ", QUERY.Cmd)
-
-			// ... local query code stays the same ...
-			localResults, err := queryLocalDB(knowledgeBaseDB, req.Criteria)
-			if err != nil {
-				logChan <- Log{Type: Info, Data: fmt.Sprintf("QUERY: ERROR querying local DB: %v", err)}
-			} else if len(localResults) > 0 {
-				logChan <- Log{Type: Info, Data: fmt.Sprintf("QUERY: Found %d records locally", len(localResults))}
-				res = localResults
-				break // Return immediately if found locally
-			}
-			logChan <- Log{Type: Info, Data: "QUERY: Data not found locally, using optimized peer query..."}
-			peerResults, err := queryPeersOptimized(knowledgeBaseDB, req.Criteria)
-			// Rest of the code stays the same:
-			if err != nil {
-				logChan <- Log{Type: Info, Data: fmt.Sprintf("QUERY: ERROR querying peers: %v", err)}
-				res = "ERROR! Failed to retrieve records from peers"
-				break
-			}
-			if len(peerResults) > 0 {
-				logChan <- Log{Type: Info, Data: fmt.Sprintf("QUERY: Received %d records from peers", len(peerResults))}
-				storeResults(knowledgeBaseDB, logChan, req.DSType, peerResults)
-				res = peerResults
-			} else {
-				logChan <- Log{Type: Info, Data: "QUERY: No data found in local or peer network"}
-				res = "No records found"
-			}
-
-		*/
 		////////////////////////////////
 		case strings.ToLower(QUERY.Cmd):
 			logChan <- Log{Info, "Received service request: QUERY"}
@@ -1235,22 +1165,6 @@ func crudPutDocStoreRev(optimusdb *KnowledgeBaseDB, logChan chan Log, dbtype str
 		}
 
 	}
-
-	///// working To test/Remove
-	/*
-		docs, err := dbDocStore.Get(ctx, "", &iface.DocumentStoreGetOptions{PartialMatches: true})
-		logChan <- Log{Type: Info, Data: fmt.Sprintf("DEBUG:.Atempt to get inserted records with partial: %v ", len(docs))}
-		for _, doc := range docs {
-			docJSON, err := json.MarshalIndent(doc, "", "  ")
-			if err != nil {
-				logChan <- Log{Type: Info, Data: fmt.Sprintf("DEBUG:.Error marshalling document:: %v ", err)}
-				continue
-			}
-			logChan <- Log{Type: Info, Data: fmt.Sprintf("DEBUG:.Document: %s ", string(docJSON))}
-		}
-
-	*/
-	///// working To test/Remove
 
 	if err == nil {
 		logChan <- Log{Type: Info, Data: fmt.Sprintf("Successfully inserted %d records", len(parsedRecords))}
@@ -2598,36 +2512,123 @@ func DedupSQLResults(rows []map[string]interface{}) []map[string]interface{} {
 	return deduped
 }
 
-// SQLDMLWithPeerFallback attempts SQL locally, then queries peers if nothing is found
+// SQLDMLWithPeerFallback attempts SQL locally, then queries peers if nothing is found.
 func SQLDMLWithPeerFallback(req Request, logChan chan Log, db *KnowledgeBaseDB) (interface{}, error) {
+	// Execute local SQL DML
 	result, err := GlobalKBSQLite.SqlDML(req.SQLDML, logChan)
 	if err != nil {
 		return nil, fmt.Errorf("local SQLDML failed: %w", err)
 	}
 
+	// Only process metadata for INSERT statements
+	upperSQL := strings.ToUpper(strings.TrimSpace(req.SQLDML))
+	if strings.HasPrefix(upperSQL, "INSERT") {
+		// Generate and store metadata asynchronously to avoid blocking
+		go func() {
+			defer func() {
+				if r := recover(); r != nil {
+					logChan <- Log{Type: RecoverableErr, Data: fmt.Sprintf("[WARN] Panic in metadata generation: %v", r)}
+				}
+			}()
+
+			// 1️Base system-level metadata
+			metadataEntry := datamodel.GenerateMetadataFromSQL(req.SQLDML)
+
+			// 2️Enrich with contextual metadata (semantic / descriptive layer)
+			/*
+				contextualMeta := contextualMetadata.GenerateMetadataFromPayload(req.SQLDML)
+
+				if contextualMeta != nil {
+					if contextualMeta.Description != "" {
+						metadataEntry.Description = contextualMeta.Description
+					}
+					if contextualMeta.Title != "" {
+						metadataEntry.Name = contextualMeta.Title
+					}
+					if len(contextualMeta.Keywords) > 0 {
+						metadataEntry.Tags = append(metadataEntry.Tags, contextualMeta.Keywords...)
+					}
+				}
+			*/
+			metadataEntry.Description = "Autogenerated description (TinyLlama disabled)"
+			metadataEntry.Name = "SampleDataset_" + time.Now().Format("20060102_150405")
+
+			metadataEntry.Tags = []string{"auto", "metadata", "fallback"}
+
+			// 3️⃣ Convert and store metadata
+			metadataMap := ConvertMetadataToMap(metadataEntry)
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+
+			// --- Store metadata in OrbitDB (decentralized catalog) ---
+			if db.KBMetadata != nil && *db.KBMetadata != nil {
+				_, metaErr := (*db.KBMetadata).Put(ctx, metadataMap)
+				if metaErr != nil {
+					logChan <- Log{Type: RecoverableErr, Data: fmt.Sprintf("[WARN] Failed to insert metadata into OrbitDB: %v", metaErr)}
+				} else {
+					logChan <- Log{Type: Info, Data: fmt.Sprintf("[INFO] Metadata inserted into OrbitDB for SQL record ID=%s", metadataEntry.ID)}
+				}
+			}
+
+			// --- Store metadata in local SQLite (metadata_catalog) ---
+			if GlobalKBSQLite != nil && GlobalKBSQLite.DB != nil {
+				insertMetaSQL := `
+					INSERT INTO metadata_catalog (
+						id, metadata_type, component, behaviour, description,
+						created_by, created_at, updated_at, name, tags
+					) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+				`
+				_, sqlMetaErr := GlobalKBSQLite.DB.Exec(insertMetaSQL,
+					metadataEntry.ID,
+					metadataEntry.MetadataType,
+					metadataEntry.Component,
+					metadataEntry.Behaviour,
+					metadataEntry.Description,
+					metadataEntry.CreatedBy,
+					metadataEntry.CreatedAt.Format(time.RFC3339),
+					metadataEntry.UpdatedAt.Format(time.RFC3339),
+					metadataEntry.Name,
+					strings.Join(metadataEntry.Tags, ","),
+				)
+
+				if sqlMetaErr != nil {
+					logChan <- Log{Type: RecoverableErr, Data: fmt.Sprintf("[WARN] Failed to insert metadata into SQLite: %v", sqlMetaErr)}
+				} else {
+					logChan <- Log{Type: Info, Data: fmt.Sprintf("[INFO] Metadata also inserted into local SQLite for ID=%s", metadataEntry.ID)}
+				}
+			}
+		}()
+	}
+
+	// --- Handle remote peer queries if no local results ---
 	records, ok := result.([]map[string]interface{})
 	if ok && len(records) == 0 {
 		logChan <- Log{Type: Info, Data: "[INFO] SQL DML: No local results — querying remote SQLite peers"}
 		peerRecords, err := queryRemoteSQLitePeers(req, db)
-		if err == nil {
+		if err != nil {
+			logChan <- Log{Type: RecoverableErr, Data: fmt.Sprintf("[WARN] Failed to query remote peers: %v", err)}
+		} else if len(peerRecords) > 0 {
 			records = append(records, peerRecords...)
+			logChan <- Log{Type: Info, Data: fmt.Sprintf("[INFO] SQL DML: Retrieved %d records from remote peers", len(peerRecords))}
 		}
 	}
 
+	// Deduplicate results
 	deduped := DedupSQLResults(records)
 	logChan <- Log{Type: Info, Data: fmt.Sprintf("[INFO] SQL DML: Retrieved %d → %d records after deduplication", len(records), len(deduped))}
 
+	// Return appropriate response based on result type
 	if _, ok := result.([]map[string]interface{}); ok {
-		// Dedup + return map with "records"
 		return map[string]interface{}{
-			//"message": "OK: Successfully retrieved records",
 			"records": deduped,
 		}, nil
-	} else {
-		// This is likely what's happening for INSERT
-		return "OK: SQL statement executed successfully", nil
 	}
 
+	// Likely for INSERT, UPDATE, DELETE
+	return map[string]interface{}{
+		"status":  "success",
+		"message": "SQL statement executed successfully",
+	}, nil
 }
 
 // querySQLPeers sends SQLDML query to peers and collects responses
