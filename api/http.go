@@ -15,6 +15,7 @@ import (
 	"net/http"
 	"optimusdb/app"
 	"optimusdb/config"
+	"optimusdb/contextualmetadata"
 	"optimusdb/tosca"
 	"os"
 	"regexp"
@@ -32,6 +33,13 @@ type PeerTracker struct {
 
 // Global peer tracker
 var peerTracker = &PeerTracker{Peers: make(map[peer.ID]peer.AddrInfo)}
+
+type enrichReq struct {
+	DB      string `json:"db"`
+	Table   string `json:"table"`
+	MaxRows int    `json:"maxRows"`
+	Greek   bool   `json:"greek"`
+}
 
 // TrackPeer adds a new peer to the list
 func TrackPeer(pi peer.AddrInfo) {
@@ -827,4 +835,41 @@ func sendJSONResponse(w http.ResponseWriter, payload interface{}) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(http.StatusOK)
 	_ = json.NewEncoder(w).Encode(payload)
+}
+
+func EnrichHandler(kb *app.KnowledgeBaseDB) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var req enrichReq
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, "invalid JSON", http.StatusBadRequest)
+			return
+		}
+		if req.MaxRows <= 0 {
+			req.MaxRows = 200
+		}
+
+		// Choose client by build tag
+		var svc contextualmetadata.Service
+		svc.UseGreek = req.Greek
+		// HTTP mode:
+
+		/*
+			if c, err := contextualmetadata.NewTinyLlamaHTTP(); err == nil {
+				svc.Client = c
+			} else if c2, err2 := contextualmetadata.NewTinyLlamaLocal(); err2 == nil {
+				svc.Client = c2
+			} else {
+				http.Error(w, "No TinyLlama client configured", http.StatusInternalServerError)
+				return
+			}
+
+		*/
+
+		entry, err := svc.EnrichDataset(r.Context(), kb, req.DB, req.Table, req.MaxRows)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(entry)
+	}
 }

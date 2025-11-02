@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/ipfs/kubo/core"
+	pubsub "github.com/libp2p/go-libp2p-pubsub"
 	"log"
 	"optimusdb/config"
 	"optimusdb/mq"
@@ -66,6 +67,11 @@ type KnowledgeBaseDB struct {
 
 	// Query engine
 	QueryEngine *queryengine.OptimizedEngine
+
+	// Add these for GossipSub
+	PubSub        *pubsub.PubSub
+	ElectionTopic *pubsub.Topic
+	ElectionSub   *pubsub.Subscription
 }
 
 // /** this is the struct for the SQL

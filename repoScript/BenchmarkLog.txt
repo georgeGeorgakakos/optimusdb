@@ -2488,3 +2488,418 @@ Zero-hit control (query non-existent prefix) →   591 ms |    1 rec |     2% | 
 Windows PowerShell transcript end
 End time: 20251026015602
 **********************
+**********************
+Windows PowerShell transcript start
+Start time: 20251102200338
+Username: PCUSER\georg
+RunAs User: PCUSER\georg
+Configuration Name: 
+Machine: PCUSER (Microsoft Windows NT 10.0.22631.0)
+Host Application: C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe
+Process ID: 9628
+PSVersion: 5.1.22621.6133
+PSEdition: Desktop
+PSCompatibleVersions: 1.0, 2.0, 3.0, 4.0, 5.0, 5.1.22621.6133
+BuildVersion: 10.0.22621.6133
+CLRVersion: 4.0.30319.42000
+WSManStackVersion: 3.0
+PSRemotingProtocolVersion: 2.3
+SerializationVersion: 1.1.0.1
+**********************
+Checking agent health...
+✅ Agent port 18001 →
+✅ Agent port 18002 →
+✅ Agent port 18003 →
+✅ Agent port 18004 →
+✅ Agent port 18005 →
+✅ Agent port 18006 →
+✅ Agent port 18007 →
+✅ Agent port 18008 →
+
+Seeding 50 records across 8 agents...
+   + test-18007-8501d90c → port 18007
+   + test-18007-401c7dcd → port 18007
+   + test-18006-221b8632 → port 18006
+   + test-18003-b82ed22c → port 18003
+   + test-18002-62577e65 → port 18002
+   + test-18003-c91a9691 → port 18003
+   + test-18007-b6da380f → port 18007
+   + test-18006-529cbf5b → port 18006
+   + test-18003-b25d4b49 → port 18003
+   + test-18001-1b77c454 → port 18001
+   + test-18003-557ac2cc → port 18003
+   + test-18005-6582a805 → port 18005
+   + test-18006-603eb4bd → port 18006
+   + test-18004-f3c27418 → port 18004
+   + test-18005-e4981420 → port 18005
+   + test-18001-8b4c4cf4 → port 18001
+   + test-18001-7d1716b4 → port 18001
+   + test-18003-edb0e8eb → port 18003
+   + test-18001-9c56b847 → port 18001
+   + test-18002-2ab1e46c → port 18002
+   + test-18002-d625d78d → port 18002
+   + test-18002-101e9587 → port 18002
+   + test-18006-cd418ea6 → port 18006
+   + test-18007-37eeca07 → port 18007
+   + test-18003-2101553c → port 18003
+   + test-18004-a1e42740 → port 18004
+   + test-18001-21040255 → port 18001
+   + test-18003-168bcdae → port 18003
+   + test-18007-dae6d38a → port 18007
+   + test-18003-9696f34e → port 18003
+   + test-18005-65a3ded0 → port 18005
+   + test-18001-3bc4a2f8 → port 18001
+   + test-18001-2224f7bd → port 18001
+   + test-18001-f957ce15 → port 18001
+   + test-18001-d4cf1903 → port 18001
+   + test-18003-fe78c688 → port 18003
+   + test-18004-fb4bb7d1 → port 18004
+   + test-18007-63c6dcf0 → port 18007
+   + test-18007-e892eac5 → port 18007
+   + test-18003-f1589167 → port 18003
+   + test-18003-e5e57907 → port 18003
+   + test-18006-e805e787 → port 18006
+   + test-18004-073bcaf1 → port 18004
+   + test-18001-aecd81f3 → port 18001
+   + test-18007-5e56c5fa → port 18007
+   + test-18005-adf2d4a9 → port 18005
+   + test-18003-28e3a9d2 → port 18003
+   + test-18007-4cafe27e → port 18007
+   + test-18007-5fc24032 → port 18007
+   + test-18005-c84cfd77 → port 18005
+
+✅ Insert phase complete. Waiting 8s for replication...
+▶️  Running: LOCAL_ONLY (baseline local)  (initiator: 18008)  trace:8c603239
+   Payload:
+   {
+       "criteria":  [
+                        {
+                            "_id":  {
+                                        "$regex":  "test-*"
+                                    }
+                        }
+                    ],
+       "method":  {
+                      "cmd":  "query"
+                  },
+       "dstype":  "dsswres",
+       "trace_id":  "8c603239-3c0a-4387-acf0-f38d76b23dc4",
+       "options":  {
+                       "include_local":  true,
+                       "time_budget_ms":  800,
+                       "annotate_source":  true,
+                       "consistency":  "BEST_EFFORT",
+                       "strategy":  "LOCAL_ONLY"
+                   }
+   }
+⏱️  LOCAL_ONLY (baseline local): 480 ms | Results: 1 | Traced entries: 1
+   ↳ Responders: (none tagged)
+▶️  Running: REMOTE_ONLY (skip local)  (initiator: 18008)  trace:d9964a36
+   Payload:
+   {
+       "criteria":  [
+                        {
+                            "_id":  {
+                                        "$regex":  "test-*"
+                                    }
+                        }
+                    ],
+       "method":  {
+                      "cmd":  "query"
+                  },
+       "dstype":  "dsswres",
+       "trace_id":  "d9964a36-6d6c-4bbc-bdd9-70a2fa65b49e",
+       "options":  {
+                       "include_local":  false,
+                       "strategy":  "REMOTE_ONLY",
+                       "annotate_source":  true,
+                       "consistency":  "BEST_EFFORT",
+                       "max_peers":  5,
+                       "time_budget_ms":  1000
+                   }
+   }
+⏱️  REMOTE_ONLY (skip local): 421 ms | Results: 1 | Traced entries: 1
+   ↳ Responders: (none tagged)
+▶️  Running: LOCAL_THEN_REMOTE_MERGE (sequential merge)  (initiator: 18008)  trace:bedcab21
+   Payload:
+   {
+       "criteria":  [
+                        {
+                            "_id":  {
+                                        "$regex":  "test-*"
+                                    }
+                        }
+                    ],
+       "method":  {
+                      "cmd":  "query"
+                  },
+       "dstype":  "dsswres",
+       "trace_id":  "bedcab21-3c1d-4732-aef7-41de1d5866f7",
+       "options":  {
+                       "include_local":  true,
+                       "time_budget_ms":  1500,
+                       "annotate_source":  true,
+                       "consistency":  "BEST_EFFORT",
+                       "strategy":  "LOCAL_THEN_REMOTE_MERGE"
+                   }
+   }
+⏱️  LOCAL_THEN_REMOTE_MERGE (sequential merge): 459 ms | Results: 1 | Traced entries: 1
+   ↳ Responders: (none tagged)
+▶️  Running: PARALLEL_MERGE (hedged)  (initiator: 18008)  trace:4967fe85
+   Payload:
+   {
+       "criteria":  [
+                        {
+                            "_id":  {
+                                        "$regex":  "test-*"
+                                    }
+                        }
+                    ],
+       "method":  {
+                      "cmd":  "query"
+                  },
+       "dstype":  "dsswres",
+       "trace_id":  "4967fe85-45c3-49b3-9cd5-1f490e4137aa",
+       "options":  {
+                       "include_local":  true,
+                       "strategy":  "PARALLEL_MERGE",
+                       "annotate_source":  true,
+                       "consistency":  "BEST_EFFORT",
+                       "max_peers":  5,
+                       "time_budget_ms":  1800
+                   }
+   }
+⏱️  PARALLEL_MERGE (hedged): 427 ms | Results: 1 | Traced entries: 1
+   ↳ Responders: (none tagged)
+▶️  Running: QUORUM (majority peers)  (initiator: 18008)  trace:3f703522
+   Payload:
+   {
+       "criteria":  [
+                        {
+                            "_id":  {
+                                        "$regex":  "test-*"
+                                    }
+                        }
+                    ],
+       "method":  {
+                      "cmd":  "query"
+                  },
+       "dstype":  "dsswres",
+       "trace_id":  "3f703522-e7d6-47ca-9ffb-c4d96ce3b896",
+       "options":  {
+                       "include_local":  true,
+                       "min_rows":  2,
+                       "strategy":  "QUORUM",
+                       "quorum_n":  4,
+                       "consistency":  "QUORUM",
+                       "annotate_source":  true,
+                       "time_budget_ms":  2500
+                   }
+   }
+⏱️  QUORUM (majority peers): 459 ms | Results: 1 | Traced entries: 1
+   ↳ Responders: (none tagged)
+▶️  Running: REMOTE_ONLY + max_peers=2 (limited fanout)  (initiator: 18008)  trace:691e685f
+   Payload:
+   {
+       "criteria":  [
+                        {
+                            "_id":  {
+                                        "$regex":  "test-*"
+                                    }
+                        }
+                    ],
+       "method":  {
+                      "cmd":  "query"
+                  },
+       "dstype":  "dsswres",
+       "trace_id":  "691e685f-daed-44f0-a581-a7a15d02178f",
+       "options":  {
+                       "include_local":  false,
+                       "strategy":  "REMOTE_ONLY",
+                       "annotate_source":  true,
+                       "consistency":  "BEST_EFFORT",
+                       "max_peers":  2,
+                       "time_budget_ms":  1200
+                   }
+   }
+⏱️  REMOTE_ONLY + max_peers=2 (limited fanout): 435 ms | Results: 1 | Traced entries: 1
+   ↳ Responders: (none tagged)
+▶️  Running: STALE_OK cache (TTL 10s)  (initiator: 18008)  trace:2decea45
+   Payload:
+   {
+       "criteria":  [
+                        {
+                            "_id":  {
+                                        "$regex":  "test-*"
+                                    }
+                        }
+                    ],
+       "method":  {
+                      "cmd":  "query"
+                  },
+       "dstype":  "dsswres",
+       "trace_id":  "2decea45-42cb-40d0-82da-493c00613eff",
+       "options":  {
+                       "stale_ok_ttl_ms":  10000,
+                       "include_local":  true,
+                       "strategy":  "LOCAL_THEN_REMOTE_MERGE",
+                       "annotate_source":  true,
+                       "consistency":  "BEST_EFFORT",
+                       "time_budget_ms":  1200
+                   }
+   }
+⏱️  STALE_OK cache (TTL 10s): 452 ms | Results: 1 | Traced entries: 1
+   ↳ Responders: (none tagged)
+▶️  Running: FORCE_REMOTE (probe even if local hits)  (initiator: 18008)  trace:cc00eae6
+   Payload:
+   {
+       "criteria":  [
+                        {
+                            "_id":  {
+                                        "$regex":  "test-*"
+                                    }
+                        }
+                    ],
+       "method":  {
+                      "cmd":  "query"
+                  },
+       "dstype":  "dsswres",
+       "trace_id":  "cc00eae6-3b9a-4c77-a54d-944d23555510",
+       "options":  {
+                       "force_remote":  true,
+                       "include_local":  true,
+                       "strategy":  "LOCAL_THEN_REMOTE_MERGE",
+                       "annotate_source":  true,
+                       "consistency":  "BEST_EFFORT",
+                       "time_budget_ms":  2200
+                   }
+   }
+⏱️  FORCE_REMOTE (probe even if local hits): 475 ms | Results: 1 | Traced entries: 1
+   ↳ Responders: (none tagged)
+▶️  Running: Consistency=ALL (bounded wait)  (initiator: 18008)  trace:80f8a962
+   Payload:
+   {
+       "criteria":  [
+                        {
+                            "_id":  {
+                                        "$regex":  "test-*"
+                                    }
+                        }
+                    ],
+       "method":  {
+                      "cmd":  "query"
+                  },
+       "dstype":  "dsswres",
+       "trace_id":  "80f8a962-9226-49a2-be58-767e040414db",
+       "options":  {
+                       "include_local":  true,
+                       "strategy":  "PARALLEL_MERGE",
+                       "annotate_source":  true,
+                       "consistency":  "ALL",
+                       "max_peers":  10,
+                       "time_budget_ms":  3500
+                   }
+   }
+⏱️  Consistency=ALL (bounded wait): 618 ms | Results: 1 | Traced entries: 1
+   ↳ Responders: (none tagged)
+▶️  Running: Zero-hit control (query non-existent prefix)  (initiator: 18008)  trace:f8f4d7d1
+   Payload:
+   {
+       "criteria":  [
+                        {
+                            "_id":  {
+                                        "$regex":  "test-*"
+                                    }
+                        }
+                    ],
+       "method":  {
+                      "cmd":  "query"
+                  },
+       "dstype":  "dsswres",
+       "trace_id":  "f8f4d7d1-6cc4-4f5f-aa92-c280430c2e44",
+       "options":  {
+                       "include_local":  false,
+                       "time_budget_ms":  1200,
+                       "annotate_source":  true,
+                       "consistency":  "BEST_EFFORT",
+                       "strategy":  "REMOTE_ONLY"
+                   }
+   }
+⏱️  Zero-hit control (query non-existent prefix): 512 ms | Results: 1 | Traced entries: 1
+   ↳ Responders: (none tagged)
+
+Testing propagation with a random update...
+▶️  Running: Propagation Verify  (initiator: 18001)  trace:2b04f56f
+   Payload:
+   {
+       "criteria":  [
+                        {
+                            "_id":  {
+                                        "$regex":  "test-18003-9696f34e"
+                                    }
+                        }
+                    ],
+       "method":  {
+                      "cmd":  "query"
+                  },
+       "dstype":  "dsswres",
+       "trace_id":  "2b04f56f-191f-4c2a-9d18-7660dad18b7e",
+       "options":  {
+                       "annotate_source":  true,
+                       "time_budget_ms":  2000,
+                       "consistency":  "BEST_EFFORT",
+                       "strategy":  "PARALLEL_MERGE"
+                   }
+   }
+⏱️  Propagation Verify: 15 ms | Results: 1 | Traced entries: 1
+   ↳ Responders: (none tagged)
+❌ Update for test-18003-9696f34e not visible across peers.
+
+Re-running global query to test cache efficiency...
+▶️  Running: Cache Requery  (initiator: 18008)  trace:bb095a1e
+   Payload:
+   {
+       "criteria":  [
+                        {
+                            "_id":  {
+                                        "$regex":  "test-*"
+                                    }
+                        }
+                    ],
+       "method":  {
+                      "cmd":  "query"
+                  },
+       "dstype":  "dsswres",
+       "trace_id":  "bb095a1e-84ac-4574-b349-dd720e3587f6",
+       "options":  {
+                       "stale_ok_ttl_ms":  10000,
+                       "annotate_source":  true,
+                       "time_budget_ms":  900,
+                       "consistency":  "BEST_EFFORT",
+                       "strategy":  "LOCAL_THEN_REMOTE_MERGE"
+                   }
+   }
+⏱️  Cache Requery: 494 ms | Results: 1 | Traced entries: 1
+   ↳ Responders: (none tagged)
+✅ Cache re-query finished.
+
+==================== Benchmark Summary ====================
+Agents: 8 | Records inserted: 50 | Initiator: 18008 ()
+------------------------------------------------------------
+LOCAL_ONLY (baseline local)          →   480 ms |    1 rec |     2% | initiator 18008 | responders: -
+REMOTE_ONLY (skip local)             →   421 ms |    1 rec |     2% | initiator 18008 | responders: -
+LOCAL_THEN_REMOTE_MERGE (sequential merge) →   459 ms |    1 rec |     2% | initiator 18008 | responders: -
+PARALLEL_MERGE (hedged)              →   427 ms |    1 rec |     2% | initiator 18008 | responders: -
+QUORUM (majority peers)              →   459 ms |    1 rec |     2% | initiator 18008 | responders: -
+REMOTE_ONLY + max_peers=2 (limited fanout) →   435 ms |    1 rec |     2% | initiator 18008 | responders: -
+STALE_OK cache (TTL 10s)             →   452 ms |    1 rec |     2% | initiator 18008 | responders: -
+FORCE_REMOTE (probe even if local hits) →   475 ms |    1 rec |     2% | initiator 18008 | responders: -
+Consistency=ALL (bounded wait)       →   618 ms |    1 rec |     2% | initiator 18008 | responders: -
+Zero-hit control (query non-existent prefix) →   512 ms |    1 rec |     2% | initiator 18008 | responders: -
+📁 Results exported → C:\Users\georg\GolandProjects\optimusdb-lsa\repoScript\BenchmarkResults.json
+📁 Responder CSV exported → C:\Users\georg\GolandProjects\optimusdb-lsa\repoScript\BenchmarkResponders.csv
+✅ Benchmark Completed
+**********************
+Windows PowerShell transcript end
+End time: 20251102200405
+**********************

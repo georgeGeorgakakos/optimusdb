@@ -26,14 +26,14 @@ import (
 )
 
 // Service represents the discovery service
+
 type Service struct {
-	host host.Host
-	mdns mdns.Service
-	//dht    discovery.Discovery
+	host   host.Host
+	mdns   mdns.Service
 	dht    *dht.IpfsDHT
-	pubsub *pubsub.PubSub
-	topic  *pubsub.Topic
-	sub    *pubsub.Subscription
+	Pubsub *pubsub.PubSub       // ← Capitalized (exported)
+	Topic  *pubsub.Topic        // ← Capitalized (exported)
+	Sub    *pubsub.Subscription // ← Capitalized (exported)
 }
 
 var peerList = struct {
@@ -276,7 +276,7 @@ func WaitForExit(service *Service) {
 // listenPubSub listens for new peer announcements
 func (s *Service) listenPubSub(handler *DiscoveryNotifee) {
 	for {
-		msg, err := s.sub.Next(context.Background())
+		msg, err := s.Sub.Next(context.Background())
 		if err == nil {
 			peerID, err := peer.Decode(string(msg.Data))
 			if err == nil {
@@ -296,8 +296,8 @@ func (s *Service) StopDiscovery() {
 	}
 
 	///pubsub service
-	if s.pubsub != nil && s.topic != nil {
-		s.topic.Close()
+	if s.Pubsub != nil && s.Topic != nil {
+		s.Topic.Close()
 		log.Println("[INFO] PubSub discovery stopped.")
 	}
 
@@ -338,35 +338,6 @@ func StartDiscovery(h host.Host, knowledgeBaseDB *app.KnowledgeBaseDB) *Service 
 		}
 	}
 
-	//->Properly initializes DHT using dht.New(context.Background(), h).
-	//->Uses Advertise(ctx, "optimusdb-dht") to announce presence before discovery.
-	//->Adds proper error handling for DHT initialization, Advertise, and FindPeers.
-	//->Introduces time intervals (30s) to prevent excessive DHT lookups.
-
-	// Start DHT discovery if enabled
-	/*
-		if *config.FlagAutodiscoveryDHT {
-			log.Println("[INFO] Enabling DHT discovery")
-			service.dht = routing.NewRoutingDiscovery(h.Peerstore())
-			go func() {
-				for {
-					ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-					peers, err := service.dht.FindPeers(ctx, "optimusdb-dht")
-					cancel()
-					if err == nil {
-						for _, p := range peers {
-							peerHandler.HandlePeerFound(p)
-						}
-					}
-					time.Sleep(15 * time.Second)
-				}
-			}()
-		}
-
-	*/
-
-	//*
-	//
 	if *config.FlagAutodiscoveryDHT {
 		log.Println("[INFO] Enabling DHT discovery")
 		app.GlobalLoggerDB.AddToOptimusLog("DISCOVERY", fmt.Sprintf("Enabling DHT discovery"), runtime.GOOS)
@@ -421,24 +392,38 @@ func StartDiscovery(h host.Host, knowledgeBaseDB *app.KnowledgeBaseDB) *Service 
 			}()
 		}
 	}
-
 	// Start PubSub discovery if enabled
 	if *config.FlagAutodiscoveryipfsPubSub {
 		log.Println("[INFO] Enabling PubSub-based discovery")
-		ps, err := pubsub.NewGossipSub(context.Background(), h)
+		app.GlobalLoggerDB.AddToOptimusLog("DISCOVERY", "Enabling PubSub-based discovery", runtime.GOOS)
+
+		ps, err := pubsub.NewGossipSub(context.Background(), h,
+			pubsub.WithPeerExchange(true),
+		)
+
 		if err != nil {
 			log.Println("[ERROR] Failed to initialize PubSub:", err)
+			app.GlobalLoggerDB.AddToOptimusLog("DISCOVERY", fmt.Sprintf("Failed to initialize PubSub: %v", err), runtime.GOOS)
 		} else {
-			topic, err := ps.Join("optimusdb-pubsub")
+			log.Println("[DISCOVERY] GossipSub created with default mesh (crash-safe)")
+			app.GlobalLoggerDB.AddToOptimusLog("DISCOVERY", "GossipSub created with default mesh", runtime.GOOS)
+
+			topic, err := ps.Join("optimusdb")
 			if err != nil {
 				log.Println("[ERROR] Failed to join PubSub topic:", err)
+				app.GlobalLoggerDB.AddToOptimusLog("DISCOVERY", fmt.Sprintf("Failed to join PubSub topic: %v", err), runtime.GOOS)
 			} else {
 				sub, err := topic.Subscribe()
 				if err == nil {
-					service.pubsub = ps
-					service.topic = topic
-					service.sub = sub
+					service.Pubsub = ps // ← IMPORTANT: Store in service
+					service.Topic = topic
+					service.Sub = sub
 					go service.listenPubSub(peerHandler)
+					log.Println("[DISCOVERY] Subscribed to optimusdb topic")
+					app.GlobalLoggerDB.AddToOptimusLog("DISCOVERY", "Subscribed to optimusdb topic", runtime.GOOS)
+				} else {
+					log.Println("[ERROR] Failed to subscribe to topic:", err)
+					app.GlobalLoggerDB.AddToOptimusLog("DISCOVERY", fmt.Sprintf("Failed to subscribe to topic: %v", err), runtime.GOOS)
 				}
 			}
 		}

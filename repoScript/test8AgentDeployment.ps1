@@ -12,9 +12,13 @@ $containerCount = 8
 $baseHttpPort = 18000
 $baseP2PPort  = 14000
 $baseRPCPort  = 15000
+$baseP2PQUIC  = 13000
+
 $internalHttp = 8089
 $internalP2P  = 4001
+$internalP2PQUIC  = 4002  # libp2p QUIC UDP
 $internalRPC  = 5001
+
 
 # ===========================================
 # Script Start
@@ -46,6 +50,9 @@ for ($i = 1; $i -le $containerCount; $i++) {
     $httpPort = $baseHttpPort + $i
     $p2pPort  = $baseP2PPort  + $i
     $rpcPort  = $baseRPCPort  + $i
+    $p2PQUIC = $baseP2PQUIC  + $i
+
+
 
     # Remove container if it already exists
     $exists = docker ps -a --format '{{.Names}}' | Where-Object { $_ -eq $containerName }
@@ -55,7 +62,7 @@ for ($i = 1; $i -le $containerCount; $i++) {
     }
 
     Write-Host "▶️  Starting $containerName ..." -ForegroundColor Cyan
-    Write-Host "   Host Ports: HTTP=$httpPort, P2P=$p2pPort, RPC=$rpcPort"
+    Write-Host "   Host Ports: HTTP=$httpPort, P2P=$p2pPort, RPC=$rpcPort , P2PQUIk=$p2PQUIC"
 
     try {
         docker run -d `
@@ -64,6 +71,7 @@ for ($i = 1; $i -le $containerCount; $i++) {
             -p "$($httpPort):$($internalHttp)" `
             -p "$($p2pPort):$($internalP2P)" `
             -p "$($rpcPort):$($internalRPC)" `
+            -p "$($p2PQUIC):$($internalP2PQUIC)" `
             $imageName | Out-Null
 
         if ($LASTEXITCODE -eq 0) {

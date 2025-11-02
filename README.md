@@ -42,6 +42,7 @@ Key goals:
 - [Query Engine Mechanisms](docs/OptimusDB_QueriesMechanisms.md)
 - [Query Engine and Optimization](docs/OptimusDB_QueryEngineOptimization.md)
 - [Leader Election Mechanism](docs/OptimusDB_LeaderElection.md)
+- [Election versus Discovery Peer Mechanism](docs/OptimusDB_DiscoveryVsElection.md)
 - [Metadata Management](docs/OptimusDB_Metadata_guide.md)
 - [EMS Integration](docs/OptimusDB_EMS.md)
 - [Quick Start](#quick-start)
