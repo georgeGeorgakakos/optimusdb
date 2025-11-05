@@ -1,0 +1,238 @@
+tosca_definitions_version: tosca_simple_yaml_1_3
+
+description: >
+  Sample Capacity Description TOSCA Template for Swarmchestrate KB
+  This describes available infrastructure resources provided by Capacity Provider
+  Stored in the Capacity Descriptions Datastore
+
+metadata:
+  template_name: "EdgeCluster-CapacityProfile"
+  template_author: "Capacity Provider"
+  template_version: "1.0.0"
+  kb_datastore: "Capacity_Descriptions"
+  provider_id: "cp-edge-node-eu-central-001"
+  location: "Frankfurt, Germany"
+  region: "eu-central-1"
+  zone: "eu-central-1a"
+  last_updated: "2025-11-05T10:30:00Z"
+  status: "available"
+
+imports:
+  - capacity_types: https://swarmchestrate.eu/tosca/types/capacity_nodes.yaml
+
+topology_template:
+  description: >
+    Available capacity at edge location including compute, storage, and network resources
+
+  node_templates:
+
+    # Physical Compute Node
+    edge_compute_node_01:
+      type: tosca.nodes.Compute.Physical
+      properties:
+        hostname: "edge-node-01.eu-central.swarm"
+        cpu_architecture: "x86_64"
+        total_cpu_cores: 32
+        available_cpu_cores: 24
+        cpu_frequency: "3.2 GHz"
+        cpu_model: "Intel Xeon Gold 6342"
+        total_memory: 128 GB
+        available_memory: 96 GB
+        memory_type: "DDR4"
+        operating_system: "Ubuntu 24.04 LTS"
+        kernel_version: "6.8.0"
+        uptime: "45 days"
+        status: "active"
+      capabilities:
+        host:
+          properties:
+            num_cpus: 24
+            cpu_frequency: 3.2 GHz
+            mem_size: 96 GB
+        os:
+          properties:
+            architecture: x86_64
+            type: Linux
+            distribution: Ubuntu
+            version: "24.04"
+      attributes:
+        cpu_utilization_current: 25.4
+        memory_utilization_current: 31.2
+        load_average_1min: 2.3
+        load_average_5min: 2.1
+        load_average_15min: 1.9
+
+    # Storage Resources
+    local_storage_01:
+      type: tosca.nodes.Storage.BlockStorage
+      properties:
+        storage_type: "NVMe SSD"
+        total_size: 2 TB
+        available_size: 1.5 TB
+        iops_capability: 500000
+        throughput: "7 GB/s"
+        mount_point: "/mnt/storage01"
+        file_system: "ext4"
+        status: "healthy"
+      requirements:
+        - attachment: edge_compute_node_01
+      capabilities:
+        storage:
+          properties:
+            size: 1.5 TB
+      attributes:
+        disk_utilization: 25
+        read_latency_ms: 0.1
+        write_latency_ms: 0.15
+
+    # Network Interface Resources
+    network_interface_eth0:
+      type: tosca.nodes.Network.Port
+      properties:
+        interface_name: "eth0"
+        mac_address: "00:1B:44:11:3A:B7"
+        ip_address: "10.0.1.15"
+        network_speed: "10 Gbps"
+        status: "up"
+        mtu: 9000
+      capabilities:
+        link:
+          properties:
+            bandwidth: 10 Gbps
+      attributes:
+        bytes_sent_total: 5497558138880
+        bytes_received_total: 8446744073709
+        packets_sent_total: 42958641152
+        packets_received_total: 65974027264
+        errors_total: 0
+        drops_total: 0
+
+    # GPU Resources (if available)
+    gpu_accelerator_01:
+      type: tosca.nodes.Compute.GPU
+      properties:
+        gpu_model: "NVIDIA A100"
+        gpu_memory: 40 GB
+        cuda_cores: 6912
+        tensor_cores: 432
+        compute_capability: "8.0"
+        available: true
+        status: "idle"
+      requirements:
+        - host: edge_compute_node_01
+      capabilities:
+        gpu_compute:
+          properties:
+            memory: 40 GB
+            compute_capability: "8.0"
+      attributes:
+        gpu_utilization: 0
+        gpu_memory_utilization: 0
+        gpu_temperature: 35
+
+    # Container Runtime
+    kubernetes_runtime:
+      type: tosca.nodes.Container.Runtime.Kubernetes
+      properties:
+        version: "v1.29.0"
+        runtime_type: "containerd"
+        runtime_version: "1.7.2"
+        max_pods: 110
+        current_pods: 28
+        available_pod_capacity: 82
+      requirements:
+        - host: edge_compute_node_01
+      capabilities:
+        container_host:
+          properties:
+            max_containers: 110
+            available_containers: 82
+      attributes:
+        cluster_status: "ready"
+        nodes_count: 1
+        namespaces_count: 5
+
+    # Network Proximity Information
+    network_proximity:
+      type: tosca.nodes.Network.ProximityInfo
+      properties:
+        latency_to_cloud: 15 ms
+        latency_to_nearest_edge: 5 ms
+        bandwidth_to_cloud: 10 Gbps
+        bandwidth_to_nearest_edge: 40 Gbps
+        hop_count_to_cloud: 4
+        network_quality_score: 0.92
+      attributes:
+        jitter_avg: 2 ms
+        packet_loss_rate: 0.001
+        last_measured: "2025-11-05T10:25:00Z"
+
+  groups:
+    compute_resources:
+      type: tosca.groups.Root
+      members: [ edge_compute_node_01, kubernetes_runtime ]
+
+    storage_resources:
+      type: tosca.groups.Root
+      members: [ local_storage_01 ]
+
+    accelerator_resources:
+      type: tosca.groups.Root
+      members: [ gpu_accelerator_01 ]
+
+    network_resources:
+      type: tosca.groups.Root
+      members: [ network_interface_eth0, network_proximity ]
+
+  policies:
+    - availability_policy:
+        type: tosca.policies.Availability
+        properties:
+          sla_tier: "gold"
+          uptime_percentage: 99.95
+          maintenance_window: "Sunday 02:00-04:00 UTC"
+
+    - resource_reservation:
+        type: tosca.policies.Reservation
+        properties:
+          allow_overcommit: false
+          reservation_timeout: 3600
+          priority: "high"
+
+    - cost_policy:
+        type: tosca.policies.Cost
+        properties:
+          cpu_cost_per_core_hour: 0.05
+          memory_cost_per_gb_hour: 0.01
+          storage_cost_per_gb_hour: 0.0001
+          gpu_cost_per_hour: 2.50
+          network_egress_cost_per_gb: 0.02
+
+  outputs:
+    total_available_cpu:
+      description: Total available CPU cores
+      value: { get_property: [ edge_compute_node_01, available_cpu_cores ] }
+
+    total_available_memory:
+      description: Total available memory in GB
+      value: { get_property: [ edge_compute_node_01, available_memory ] }
+
+    total_available_storage:
+      description: Total available storage in TB
+      value: { get_property: [ local_storage_01, available_size ] }
+
+    node_status:
+      description: Overall node status
+      value: { get_property: [ edge_compute_node_01, status ] }
+
+    capacity_score:
+      description: Overall capacity availability score (0-1)
+      value: 0.85
+
+    location_info:
+      description: Geographical location information
+      value:
+        region: "eu-central-1"
+        zone: "eu-central-1a"
+        city: "Frankfurt"
+        country: "Germany"

@@ -51,6 +51,8 @@ Key goals:
 - [Build a Binary](#build-a-binary)
 - [Docker](#docker)
 - [K3s Deployment](#k3s-deployment)
+- [TOSCA Description](docs/OptimusDB_ToscaFiles.md)
+- [TOSCA Testing](docs/OptimusDB_ToscaTesting.md)
 - [Configuration](#configuration)
 - [Flags](#flags)
 - [Environment Variables](#environment-variables)

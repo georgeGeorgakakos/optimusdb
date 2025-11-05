@@ -1,0 +1,223 @@
+tosca_definitions_version: tosca_simple_yaml_1_3
+
+description: >
+  Sample Application Description TOSCA Template for Swarmchestrate KB
+  This represents a complete application topology stored in the ADT Datastore
+
+metadata:
+  template_name: "WebApp-MicroservicesApplication"
+  template_author: "Swarmchestrate Orchestrator"
+  template_version: "1.0.0"
+  kb_datastore: "ADT"
+  creation_timestamp: "2025-11-05T10:30:00Z"
+
+imports:
+  - nodes: https://swarmchestrate.eu/tosca/types/nodes.yaml
+  - relationships: https://swarmchestrate.eu/tosca/types/relationships.yaml
+
+topology_template:
+  description: >
+    E-commerce web application with frontend, backend API, and database components
+
+  inputs:
+    num_cpus:
+      type: integer
+      description: Number of CPUs required per container
+      default: 2
+      constraints:
+        - greater_or_equal: 1
+
+    memory_size:
+      type: scalar-unit.size
+      description: Memory required per container
+      default: 4 GB
+      constraints:
+        - greater_or_equal: 2 GB
+
+    app_port:
+      type: integer
+      description: Application port
+      default: 8080
+
+  node_templates:
+
+    # Frontend Component
+    web_frontend:
+      type: tosca.nodes.Container.Application.Docker
+      properties:
+        image: "swarmchestrate/webapp-frontend:v1.2.3"
+        ports:
+          - "80:80"
+          - "443:443"
+        environment:
+          API_ENDPOINT: "http://backend:8080/api"
+          NODE_ENV: "production"
+      requirements:
+        - host: frontend_container_runtime
+        - dependency: api_gateway
+      capabilities:
+        endpoint:
+          properties:
+            protocol: http
+            port: 80
+            url_path: /
+
+    # API Gateway / Backend
+    api_gateway:
+      type: tosca.nodes.Container.Application.Docker
+      properties:
+        image: "swarmchestrate/api-gateway:v2.1.0"
+        ports:
+          - "8080:8080"
+        environment:
+          DATABASE_URL: "postgresql://dbuser:dbpass@postgres_db:5432/appdb"
+          REDIS_URL: "redis://cache:6379"
+          JWT_SECRET: "encrypted_secret_placeholder"
+      requirements:
+        - host: backend_container_runtime
+        - dependency: postgres_db
+        - dependency: redis_cache
+      capabilities:
+        api_endpoint:
+          properties:
+            protocol: http
+            port: 8080
+            url_path: /api
+
+    # Database Service
+    postgres_db:
+      type: tosca.nodes.Database.PostgreSQL
+      properties:
+        name: "appdb"
+        port: 5432
+        user: "dbuser"
+        password: "encrypted_password_placeholder"
+      requirements:
+        - host: database_container_runtime
+      capabilities:
+        database_endpoint:
+          properties:
+            protocol: postgresql
+            port: 5432
+
+    # Cache Service
+    redis_cache:
+      type: tosca.nodes.Database.Redis
+      properties:
+        port: 6379
+        max_memory: "1GB"
+        eviction_policy: "allkeys-lru"
+      requirements:
+        - host: cache_container_runtime
+      capabilities:
+        cache_endpoint:
+          properties:
+            protocol: redis
+            port: 6379
+
+    # Container Runtime - Frontend
+    frontend_container_runtime:
+      type: tosca.nodes.Container.Runtime.Docker
+      properties:
+        num_cpus: { get_input: num_cpus }
+        mem_size: { get_input: memory_size }
+      capabilities:
+        host:
+          properties:
+            num_cpus: { get_input: num_cpus }
+            mem_size: { get_input: memory_size }
+
+    # Container Runtime - Backend
+    backend_container_runtime:
+      type: tosca.nodes.Container.Runtime.Docker
+      properties:
+        num_cpus: 4
+        mem_size: 8 GB
+      capabilities:
+        host:
+          properties:
+            num_cpus: 4
+            mem_size: 8 GB
+
+    # Container Runtime - Database
+    database_container_runtime:
+      type: tosca.nodes.Container.Runtime.Docker
+      properties:
+        num_cpus: 4
+        mem_size: 16 GB
+        disk_size: 100 GB
+      capabilities:
+        host:
+          properties:
+            num_cpus: 4
+            mem_size: 16 GB
+            disk_size: 100 GB
+
+    # Container Runtime - Cache
+    cache_container_runtime:
+      type: tosca.nodes.Container.Runtime.Docker
+      properties:
+        num_cpus: 2
+        mem_size: 2 GB
+      capabilities:
+        host:
+          properties:
+            num_cpus: 2
+            mem_size: 2 GB
+
+  groups:
+    frontend_tier:
+      type: tosca.groups.Root
+      members: [ web_frontend ]
+
+    backend_tier:
+      type: tosca.groups.Root
+      members: [ api_gateway, redis_cache ]
+
+    data_tier:
+      type: tosca.groups.Root
+      members: [ postgres_db ]
+
+  policies:
+    - scaling_policy:
+        type: tosca.policies.Scaling
+        targets: [ frontend_tier, backend_tier ]
+        properties:
+          min_instances: 2
+          max_instances: 10
+          default_instances: 3
+
+    - placement_policy:
+        type: tosca.policies.Placement
+        targets: [ data_tier ]
+        properties:
+          constraint: "region=eu-central"
+          anti_affinity: true
+
+    - monitoring_policy:
+        type: tosca.policies.Monitoring
+        targets: [ web_frontend, api_gateway, postgres_db ]
+        properties:
+          interval: 30s
+          metrics:
+            - cpu_utilization
+            - memory_usage
+            - response_time
+            - error_rate
+
+  outputs:
+    application_endpoint:
+      description: The main endpoint URL for the application
+      value: { get_attribute: [ web_frontend, endpoint, url ] }
+
+    api_endpoint:
+      description: The backend API endpoint
+      value: { get_attribute: [ api_gateway, api_endpoint, url ] }
+
+    total_cpu_requirement:
+      description: Total CPU cores required
+      value: 12
+
+    total_memory_requirement:
+      description: Total memory required
+      value: "30 GB"

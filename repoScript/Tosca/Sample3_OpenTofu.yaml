@@ -1,0 +1,342 @@
+tosca_definitions_version: tosca_simple_yaml_1_3
+
+description: >
+  Sample OpenTofu/TOSCA Hybrid Template for Swarmchestrate KB
+  This contains orchestrator-specific templates with infrastructure provisioning
+  Stored in the OpenTofu/TOSCA Templates Datastore
+
+metadata:
+  template_name: "HybridInfrastructure-SwarmDeployment"
+  template_author: "Swarmchestrate Orchestrator"
+  template_version: "1.0.0"
+  kb_datastore: "OpenTofu_TOSCA_Templates"
+  creation_timestamp: "2025-11-05T10:30:00Z"
+  orchestrator: "swarmchestrate-v2.0"
+  terraform_compatibility: "1.6.0"
+
+# OpenTofu/Terraform Configuration Section
+opentofu_config:
+  required_version: ">= 1.6.0"
+
+  providers:
+    kubernetes:
+      source: "hashicorp/kubernetes"
+      version: "~> 2.23"
+
+    docker:
+      source: "kreuzwerker/docker"
+      version: "~> 3.0"
+
+  backend:
+    type: "kubernetes"
+    config:
+      secret_suffix: "state"
+      namespace: "swarmchestrate"
+      in_cluster_config: true
+
+# Swarm Status Information
+swarm_status:
+  cluster_id: "swarm-prod-eu-001"
+  cluster_name: "production-edge-swarm"
+  cluster_status: "healthy"
+  total_nodes: 12
+  active_nodes: 11
+  available_nodes: 10
+  node_distribution:
+    cloud: 3
+    edge: 7
+    fog: 2
+  last_sync: "2025-11-05T10:28:00Z"
+  coordinator_agent: "KB-coordinator-node-01"
+  follower_agents:
+    - "KB-follower-node-02"
+    - "KB-follower-node-03"
+    - "KB-follower-node-04"
+
+imports:
+  - nodes: https://swarmchestrate.eu/tosca/types/nodes.yaml
+  - relationships: https://swarmchestrate.eu/tosca/types/relationships.yaml
+
+topology_template:
+  description: >
+    Hybrid infrastructure template combining TOSCA service descriptions 
+    with OpenTofu infrastructure provisioning for swarm deployment
+
+  inputs:
+    namespace:
+      type: string
+      description: Kubernetes namespace for deployment
+      default: "swarm-apps"
+
+    ingress_enabled:
+      type: boolean
+      description: Enable ingress controller
+      default: true
+
+    monitoring_enabled:
+      type: boolean
+      description: Enable monitoring stack
+      default: true
+
+    replicas:
+      type: integer
+      description: Number of replicas
+      default: 3
+      constraints:
+        - in_range: [ 1, 10 ]
+
+  node_templates:
+
+    # Kubernetes Namespace (OpenTofu managed)
+    app_namespace:
+      type: tosca.nodes.Container.Runtime.Kubernetes.Namespace
+      properties:
+        name: { get_input: namespace }
+        labels:
+          managed_by: "swarmchestrate"
+          environment: "production"
+        annotations:
+          deployment_timestamp: "2025-11-05T10:30:00Z"
+      # OpenTofu resource mapping
+      opentofu_resource:
+        type: "kubernetes_namespace_v1"
+        name: "app_namespace"
+        attributes:
+          metadata:
+            name: "${var.namespace}"
+            labels:
+              managed_by: "swarmchestrate"
+              environment: "production"
+
+    # Ingress Controller
+    nginx_ingress:
+      type: tosca.nodes.LoadBalancer.Nginx
+      properties:
+        enabled: { get_input: ingress_enabled }
+        service_type: "LoadBalancer"
+        replicas: 2
+        ssl_enabled: true
+      requirements:
+        - namespace: app_namespace
+      # OpenTofu helm chart mapping
+      opentofu_resource:
+        type: "helm_release"
+        name: "nginx_ingress"
+        attributes:
+          name: "nginx-ingress"
+          repository: "https://kubernetes.github.io/ingress-nginx"
+          chart: "ingress-nginx"
+          version: "4.8.0"
+          namespace: "${kubernetes_namespace_v1.app_namespace.metadata[0].name}"
+          values:
+            - "controller:\n  replicaCount: ${var.replicas}\n  service:\n    type: LoadBalancer"
+
+    # Service Mesh Configuration
+    istio_mesh:
+      type: tosca.nodes.ServiceMesh.Istio
+      properties:
+        version: "1.20.0"
+        mtls_mode: "STRICT"
+        telemetry_enabled: true
+      requirements:
+        - namespace: app_namespace
+      opentofu_resource:
+        type: "helm_release"
+        name: "istio_base"
+        attributes:
+          name: "istio-base"
+          repository: "https://istio-release.storage.googleapis.com/charts"
+          chart: "base"
+          version: "1.20.0"
+          namespace: "istio-system"
+          create_namespace: true
+
+    # Monitoring Stack
+    prometheus_stack:
+      type: tosca.nodes.Monitoring.Prometheus
+      properties:
+        enabled: { get_input: monitoring_enabled }
+        retention_days: 15
+        storage_size: 50 GB
+        scrape_interval: 30s
+      requirements:
+        - namespace: app_namespace
+      opentofu_resource:
+        type: "helm_release"
+        name: "prometheus_stack"
+        attributes:
+          name: "kube-prometheus-stack"
+          repository: "https://prometheus-community.github.io/helm-charts"
+          chart: "kube-prometheus-stack"
+          version: "55.0.0"
+          namespace: "${kubernetes_namespace_v1.app_namespace.metadata[0].name}"
+          values:
+            - "prometheus:\n  prometheusSpec:\n    retention: 15d\n    storageSpec:\n      volumeClaimTemplate:\n        spec:\n          resources:\n            requests:\n              storage: 50Gi"
+
+    # ConfigMap for Application Configuration
+    app_configmap:
+      type: tosca.nodes.Container.ConfigMap
+      properties:
+        name: "app-configuration"
+        data:
+          LOG_LEVEL: "INFO"
+          API_VERSION: "v2"
+          CACHE_TTL: "3600"
+          MAX_CONNECTIONS: "100"
+      requirements:
+        - namespace: app_namespace
+      opentofu_resource:
+        type: "kubernetes_config_map_v1"
+        name: "app_configmap"
+        attributes:
+          metadata:
+            name: "app-configuration"
+            namespace: "${kubernetes_namespace_v1.app_namespace.metadata[0].name}"
+          data:
+            LOG_LEVEL: "INFO"
+            API_VERSION: "v2"
+            CACHE_TTL: "3600"
+            MAX_CONNECTIONS: "100"
+
+    # Secret Management
+    app_secrets:
+      type: tosca.nodes.Container.Secret
+      properties:
+        name: "app-secrets"
+        type: "Opaque"
+        encrypted: true
+      requirements:
+        - namespace: app_namespace
+      opentofu_resource:
+        type: "kubernetes_secret_v1"
+        name: "app_secrets"
+        attributes:
+          metadata:
+            name: "app-secrets"
+            namespace: "${kubernetes_namespace_v1.app_namespace.metadata[0].name}"
+          type: "Opaque"
+          data:
+            database_password: "${base64encode(var.db_password)}"
+            api_key: "${base64encode(var.api_key)}"
+
+    # Persistent Volume Claim
+    app_storage:
+      type: tosca.nodes.Storage.PersistentVolume
+      properties:
+        storage_class: "fast-ssd"
+        access_mode: "ReadWriteOnce"
+        size: 100 GB
+      requirements:
+        - namespace: app_namespace
+      opentofu_resource:
+        type: "kubernetes_persistent_volume_claim_v1"
+        name: "app_storage"
+        attributes:
+          metadata:
+            name: "app-data-pvc"
+            namespace: "${kubernetes_namespace_v1.app_namespace.metadata[0].name}"
+          spec:
+            access_modes:
+              - "ReadWriteOnce"
+            storage_class_name: "fast-ssd"
+            resources:
+              requests:
+                storage: "100Gi"
+
+  # OpenTofu Variables Section
+  opentofu_variables:
+    namespace:
+      description: "Kubernetes namespace for deployment"
+      type: string
+      default: "swarm-apps"
+
+    db_password:
+      description: "Database password (sensitive)"
+      type: string
+      sensitive: true
+
+    api_key:
+      description: "API key for external services (sensitive)"
+      type: string
+      sensitive: true
+
+    replicas:
+      description: "Number of replicas"
+      type: number
+      default: 3
+
+  # OpenTofu Outputs Section
+  opentofu_outputs:
+    namespace_name:
+      description: "Created namespace name"
+      value: "${kubernetes_namespace_v1.app_namespace.metadata[0].name}"
+
+    ingress_ip:
+      description: "Ingress controller external IP"
+      value: "${helm_release.nginx_ingress.status[0].load_balancer[0].ingress[0].ip}"
+      condition: var.ingress_enabled
+
+    prometheus_url:
+      description: "Prometheus dashboard URL"
+      value: "http://${helm_release.prometheus_stack.status[0].load_balancer[0].ingress[0].ip}:9090"
+      condition: var.monitoring_enabled
+
+  groups:
+    infrastructure_layer:
+      type: tosca.groups.Root
+      members: [ app_namespace, nginx_ingress ]
+
+    observability_layer:
+      type: tosca.groups.Root
+      members: [ prometheus_stack ]
+
+    security_layer:
+      type: tosca.groups.Root
+      members: [ istio_mesh, app_secrets ]
+
+  policies:
+    - deployment_policy:
+        type: tosca.policies.Deployment
+        properties:
+          strategy: "rolling_update"
+          max_surge: 1
+          max_unavailable: 0
+
+    - security_policy:
+        type: tosca.policies.Security
+        properties:
+          pod_security_standard: "restricted"
+          network_policy_enabled: true
+          mtls_required: true
+
+    - resource_quotas:
+        type: tosca.policies.ResourceQuota
+        targets: [ app_namespace ]
+        properties:
+          limits:
+            cpu: "32"
+            memory: "128Gi"
+            pods: "100"
+            services: "50"
+            configmaps: "50"
+            secrets: "50"
+
+  outputs:
+    deployment_namespace:
+      description: Kubernetes namespace where resources are deployed
+      value: { get_property: [ app_namespace, name ] }
+
+    ingress_status:
+      description: Ingress controller deployment status
+      value: { get_property: [ nginx_ingress, enabled ] }
+
+    monitoring_status:
+      description: Monitoring stack deployment status
+      value: { get_property: [ prometheus_stack, enabled ] }
+
+    swarm_coordination:
+      description: Swarm coordination information
+      value:
+        cluster_id: "swarm-prod-eu-001"
+        coordinator: "KB-coordinator-node-01"
+        active_nodes: 11

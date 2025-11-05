@@ -1,0 +1,363 @@
+tosca_definitions_version: tosca_simple_yaml_1_3
+
+description: >
+  Sample Application Requirement TOSCA Template for Swarmchestrate
+  This represents workload specifications submitted by Application Owner
+  Defines resource requirements for application deployment
+
+metadata:
+  template_name: "ApplicationRequirements-MLTrainingWorkload"
+  template_author: "Application Owner"
+  template_version: "1.0.0"
+  submission_timestamp: "2025-11-05T09:45:00Z"
+  application_owner: "data-science-team@company.com"
+  project_id: "ml-training-project-2025"
+  priority: "high"
+  sla_tier: "gold"
+
+imports:
+  - requirements: https://swarmchestrate.eu/tosca/types/requirements.yaml
+
+topology_template:
+  description: >
+    Machine Learning training workload requirements for computer vision model
+    Requires GPU acceleration and high-performance storage
+
+  inputs:
+    training_dataset_size:
+      type: scalar-unit.size
+      description: Size of the training dataset
+      default: 500 GB
+
+    training_duration:
+      type: scalar-unit.time
+      description: Expected training duration
+      default: 24 h
+
+    checkpoint_interval:
+      type: scalar-unit.time
+      description: Model checkpoint interval
+      default: 1 h
+
+    max_budget:
+      type: float
+      description: Maximum budget for the training job
+      default: 100.0
+      constraints:
+        - greater_than: 0
+
+  node_templates:
+
+    # Training Application Requirements
+    ml_training_app:
+      type: tosca.nodes.Application.Requirements
+      properties:
+        application_name: "computer-vision-model-training"
+        application_type: "ml_training"
+        workload_category: "batch_processing"
+        priority: "high"
+        execution_mode: "dedicated"
+      requirements:
+        - compute: training_compute_requirements
+        - storage: training_storage_requirements
+        - network: training_network_requirements
+        - accelerator: gpu_requirements
+
+    # Compute Requirements
+    training_compute_requirements:
+      type: tosca.nodes.Compute.Requirements
+      properties:
+        # CPU Requirements
+        cpu_cores_min: 16
+        cpu_cores_max: 32
+        cpu_cores_preferred: 24
+        cpu_architecture: "x86_64"
+        cpu_frequency_min: 2.5 GHz
+        cpu_features_required:
+          - "avx2"
+          - "fma"
+          - "sse4_2"
+
+        # Memory Requirements
+        memory_min: 64 GB
+        memory_max: 128 GB
+        memory_preferred: 96 GB
+        memory_type_preferred: "DDR4"
+
+        # Operating System Requirements
+        os_type: "Linux"
+        os_distribution: [ "Ubuntu", "CentOS", "Rocky Linux" ]
+        os_version_min: "20.04"
+
+        # Container Runtime Requirements
+        container_runtime: "docker"
+        container_runtime_version_min: "20.10"
+        kubernetes_compatible: true
+
+        # Compute Characteristics
+        dedicated_resources: true
+        allow_overcommit: false
+        numa_aware: true
+        cpu_pinning_required: true
+      capabilities:
+        compute_capacity:
+          properties:
+            scalable: false
+            interruptible: false
+
+    # GPU/Accelerator Requirements
+    gpu_requirements:
+      type: tosca.nodes.Compute.GPU.Requirements
+      properties:
+        # GPU Specifications
+        gpu_count_min: 2
+        gpu_count_max: 4
+        gpu_count_preferred: 4
+
+        gpu_model_preferred: [ "NVIDIA A100", "NVIDIA H100", "NVIDIA V100" ]
+        gpu_memory_min: 32 GB
+        gpu_memory_preferred: 40 GB
+
+        # GPU Features
+        cuda_version_min: "11.8"
+        compute_capability_min: "7.0"
+        tensor_cores_required: true
+        mixed_precision_support: true
+
+        # GPU Topology
+        nvlink_required: true
+        multi_gpu_mode: "NVLink"
+        gpu_affinity: "optimal"
+      capabilities:
+        gpu_compute:
+          properties:
+            parallel_training: true
+            distributed_training: false
+
+    # Storage Requirements
+    training_storage_requirements:
+      type: tosca.nodes.Storage.Requirements
+      properties:
+        # Dataset Storage
+        dataset_storage_size: { get_input: training_dataset_size }
+        dataset_storage_type: "block"
+        dataset_access_mode: "ReadOnlyMany"
+        dataset_iops_min: 10000
+
+        # Working Storage
+        working_storage_size: 1 TB
+        working_storage_type: "block"
+        working_storage_class: "high-performance-ssd"
+        working_access_mode: "ReadWriteOnce"
+        working_iops_min: 50000
+        working_throughput_min: "2 GB/s"
+
+        # Checkpoint Storage
+        checkpoint_storage_size: 200 GB
+        checkpoint_storage_type: "object"
+        checkpoint_access_mode: "ReadWriteMany"
+        checkpoint_replication: 3
+
+        # Model Output Storage
+        output_storage_size: 50 GB
+        output_storage_type: "object"
+        output_access_mode: "ReadWriteMany"
+
+        # Storage Performance
+        latency_max: 1 ms
+        filesystem_type: [ "ext4", "xfs" ]
+        mount_options:
+          - "noatime"
+          - "nodiratime"
+      capabilities:
+        storage_capacity:
+          properties:
+            persistent: true
+            backup_required: true
+
+    # Network Requirements
+    training_network_requirements:
+      type: tosca.nodes.Network.Requirements
+      properties:
+        # Bandwidth Requirements
+        network_bandwidth_min: 10 Gbps
+        network_bandwidth_preferred: 25 Gbps
+
+        # Latency Requirements
+        latency_max: 10 ms
+        latency_to_storage: 2 ms
+        latency_to_registry: 50 ms
+
+        # Network Features
+        rdma_support: true
+        infiniband_preferred: true
+        network_isolation: true
+        dedicated_vlan: true
+
+        # Communication Patterns
+        inbound_bandwidth: 5 Gbps
+        outbound_bandwidth: 5 Gbps
+        internal_bandwidth: 10 Gbps
+
+        # Ports Required
+        ports_required:
+          - port: 6006
+            protocol: "TCP"
+            description: "TensorBoard"
+          - port: 8888
+            protocol: "TCP"
+            description: "Jupyter Notebook"
+          - port_range: "30000-30010"
+            protocol: "TCP"
+            description: "Training communication"
+      capabilities:
+        connectivity:
+          properties:
+            internet_access: true
+            private_network: true
+
+    # Data Source Requirements
+    training_data_source:
+      type: tosca.nodes.DataSource.Requirements
+      properties:
+        data_location: "s3://ml-datasets/computer-vision/imagenet"
+        data_format: [ "TFRecord", "HDF5", "Parquet" ]
+        data_access_protocol: "s3"
+        data_preprocessing: true
+        data_augmentation: true
+        data_parallel_loading: true
+        prefetch_buffer_size: 10 GB
+      requirements:
+        - network: training_network_requirements
+
+  groups:
+    compute_resources:
+      type: tosca.groups.Requirements
+      members: [ training_compute_requirements, gpu_requirements ]
+
+    storage_resources:
+      type: tosca.groups.Requirements
+      members: [ training_storage_requirements ]
+
+    network_resources:
+      type: tosca.groups.Requirements
+      members: [ training_network_requirements ]
+
+  policies:
+    # Resource Placement Constraints
+    - placement_constraints:
+        type: tosca.policies.Placement.Requirements
+        properties:
+          geographical_region: [ "eu-central", "eu-west" ]
+          availability_zone: "any"
+          node_type: [ "cloud", "edge" ]
+          node_type_preference: "cloud"
+          anti_affinity_groups: [ "production-workloads" ]
+          colocation_required: true
+          max_distance_km: 100
+
+    # Performance Requirements
+    - performance_requirements:
+        type: tosca.policies.Performance.Requirements
+        properties:
+          min_training_throughput: "1000 samples/sec"
+          max_job_duration: { get_input: training_duration }
+          checkpoint_interval: { get_input: checkpoint_interval }
+          failure_tolerance: "checkpoint_recovery"
+
+    # Cost Constraints
+    - cost_constraints:
+        type: tosca.policies.Cost.Requirements
+        properties:
+          max_total_cost: { get_input: max_budget }
+          cost_model: "pay_as_you_go"
+          cost_optimization: true
+          spot_instances_allowed: false
+
+    # Security Requirements
+    - security_requirements:
+        type: tosca.policies.Security.Requirements
+        properties:
+          data_encryption_at_rest: true
+          data_encryption_in_transit: true
+          network_isolation: true
+          access_control: "RBAC"
+          compliance: [ "GDPR", "ISO27001" ]
+          audit_logging: true
+
+    # Availability Requirements
+    - availability_requirements:
+        type: tosca.policies.Availability.Requirements
+        properties:
+          min_uptime_percentage: 99.9
+          checkpoint_enabled: true
+          auto_restart: true
+          max_restart_attempts: 3
+          preemptible: false
+
+    # Monitoring Requirements
+    - monitoring_requirements:
+        type: tosca.policies.Monitoring.Requirements
+        properties:
+          metrics_collection: true
+          logging_enabled: true
+          log_retention_days: 30
+          metrics_required:
+            - "gpu_utilization"
+            - "gpu_memory_usage"
+            - "training_loss"
+            - "training_accuracy"
+            - "samples_per_second"
+            - "io_throughput"
+            - "network_bandwidth"
+          alerting_enabled: true
+          alert_conditions:
+            - metric: "gpu_utilization"
+              threshold: 50
+              operator: "less_than"
+              duration: 300
+            - metric: "training_loss"
+              threshold: 0
+              operator: "equals"
+              duration: 60
+
+  outputs:
+    total_compute_requirement:
+      description: Total compute resources required
+      value:
+        cpu_cores: "16-32"
+        memory: "64-128 GB"
+        gpu_count: "2-4"
+        gpu_memory: "32-40 GB per GPU"
+
+    total_storage_requirement:
+      description: Total storage resources required
+      value:
+        dataset: "500 GB"
+        working: "1 TB"
+        checkpoint: "200 GB"
+        output: "50 GB"
+        total: "~1.75 TB"
+
+    estimated_resource_cost:
+      description: Estimated cost for the training job
+      value: "$75-100"
+
+    priority_level:
+      description: Job priority level
+      value: "high"
+
+    sla_requirements:
+      description: Service level agreement requirements
+      value:
+        tier: "gold"
+        uptime: "99.9%"
+        max_duration: "24 hours"
+        support_level: "24x7"
+
+    contact_information:
+      description: Application owner contact information
+      value:
+        owner: "data-science-team@company.com"
+        project: "ml-training-project-2025"
+        department: "AI Research"

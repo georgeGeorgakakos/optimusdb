@@ -1,0 +1,430 @@
+tosca_definitions_version: tosca_simple_yaml_1_3
+
+description: >
+  Sample Deployment/Release Plan TOSCA Template for Swarmchestrate KB
+  This represents a processed deployment plan with matched capacity and execution instructions
+  Stored in the Deployment/Release Plans Datastore
+
+metadata:
+  template_name: "DeploymentPlan-WebApp-Release-v1.2.3"
+  template_author: "Swarmchestrate Orchestrator"
+  template_version: "1.0.0"
+  kb_datastore: "Deployment_Release_Plans"
+  application_id: "webapp-microservices-app-001"
+  deployment_id: "deploy-2025-11-05-103045-xyz"
+  creation_timestamp: "2025-11-05T10:30:45Z"
+  execution_status: "ready_for_deployment"
+  planned_execution_time: "2025-11-05T11:00:00Z"
+
+# Capacity Matching Results
+capacity_matching:
+  status: "successful"
+  match_score: 0.92
+  timestamp: "2025-11-05T10:30:40Z"
+  matched_resources:
+    - resource_id: "edge-node-01.eu-central.swarm"
+      match_score: 0.95
+      allocated: true
+    - resource_id: "cloud-node-02.eu-central.swarm"
+      match_score: 0.89
+      allocated: true
+    - resource_id: "edge-node-03.eu-central.swarm"
+      match_score: 0.91
+      allocated: true
+
+# Resource Allocation Summary
+resource_allocation:
+  total_cpu_allocated: 12
+  total_memory_allocated: "30 GB"
+  total_storage_allocated: "150 GB"
+  total_gpu_allocated: 0
+  estimated_cost_per_hour: 2.15
+  reservation_ids:
+    - "res-20251105-001"
+    - "res-20251105-002"
+    - "res-20251105-003"
+
+imports:
+  - nodes: https://swarmchestrate.eu/tosca/types/nodes.yaml
+  - relationships: https://swarmchestrate.eu/tosca/types/relationships.yaml
+
+topology_template:
+  description: >
+    Executable deployment plan with specific resource assignments and orchestration instructions
+
+  substitution_mappings:
+    node_type: tosca.nodes.Application.DeploymentPlan
+    capabilities:
+      deployment_ready: [ deployment_plan, ready ]
+
+  node_templates:
+
+    # Deployment Plan Root
+    deployment_plan:
+      type: tosca.nodes.DeploymentPlan
+      properties:
+        plan_id: "deploy-2025-11-05-103045-xyz"
+        application_name: "WebApp-MicroservicesApplication"
+        version: "1.2.3"
+        deployment_strategy: "blue_green"
+        rollback_enabled: true
+        health_check_enabled: true
+        status: "ready"
+      capabilities:
+        ready:
+          properties:
+            validated: true
+            capacity_matched: true
+
+    # Frontend Deployment Instruction
+    frontend_deployment:
+      type: tosca.nodes.DeploymentInstruction
+      properties:
+        component_name: "web_frontend"
+        target_node: "edge-node-01.eu-central.swarm"
+        target_namespace: "webapp-prod"
+        deployment_order: 1
+        replicas: 3
+        image: "swarmchestrate/webapp-frontend:v1.2.3"
+        resource_allocation:
+          cpu: "2 cores"
+          memory: "4 GB"
+          storage: "10 GB"
+        ports:
+          - container_port: 80
+            host_port: 8080
+            protocol: "TCP"
+          - container_port: 443
+            host_port: 8443
+            protocol: "TCP"
+        environment_variables:
+          API_ENDPOINT: "http://10.0.1.20:8080/api"
+          NODE_ENV: "production"
+          INSTANCE_ID: "${POD_NAME}"
+        health_check:
+          type: "http"
+          path: "/health"
+          port: 80
+          initial_delay: 30
+          period: 10
+          timeout: 5
+          failure_threshold: 3
+        allocated_capacity:
+          node_id: "edge-node-01.eu-central.swarm"
+          reservation_id: "res-20251105-001"
+          cpu_cores: [ 4, 5 ]
+          memory_range: "0x1000000000-0x1100000000"
+      requirements:
+        - depends_on: backend_deployment
+
+    # Backend API Deployment Instruction
+    backend_deployment:
+      type: tosca.nodes.DeploymentInstruction
+      properties:
+        component_name: "api_gateway"
+        target_node: "cloud-node-02.eu-central.swarm"
+        target_namespace: "webapp-prod"
+        deployment_order: 2
+        replicas: 3
+        image: "swarmchestrate/api-gateway:v2.1.0"
+        resource_allocation:
+          cpu: "4 cores"
+          memory: "8 GB"
+          storage: "20 GB"
+        ports:
+          - container_port: 8080
+            host_port: 8080
+            protocol: "TCP"
+        environment_variables:
+          DATABASE_URL: "postgresql://dbuser:${DB_PASSWORD}@10.0.1.25:5432/appdb"
+          REDIS_URL: "redis://10.0.1.26:6379"
+          JWT_SECRET: "${JWT_SECRET}"
+          LOG_LEVEL: "INFO"
+        secrets:
+          - name: "app-secrets"
+            keys: [ "DB_PASSWORD", "JWT_SECRET" ]
+        health_check:
+          type: "http"
+          path: "/api/health"
+          port: 8080
+          initial_delay: 45
+          period: 15
+          timeout: 10
+          failure_threshold: 3
+        allocated_capacity:
+          node_id: "cloud-node-02.eu-central.swarm"
+          reservation_id: "res-20251105-002"
+          cpu_cores: [ 8, 9, 10, 11 ]
+          memory_range: "0x2000000000-0x2200000000"
+      requirements:
+        - depends_on: database_deployment
+        - depends_on: cache_deployment
+
+    # Database Deployment Instruction
+    database_deployment:
+      type: tosca.nodes.DeploymentInstruction
+      properties:
+        component_name: "postgres_db"
+        target_node: "cloud-node-02.eu-central.swarm"
+        target_namespace: "webapp-prod"
+        deployment_order: 3
+        replicas: 1
+        image: "postgres:15-alpine"
+        resource_allocation:
+          cpu: "4 cores"
+          memory: "16 GB"
+          storage: "100 GB"
+        ports:
+          - container_port: 5432
+            host_port: 5432
+            protocol: "TCP"
+        environment_variables:
+          POSTGRES_DB: "appdb"
+          POSTGRES_USER: "dbuser"
+          POSTGRES_PASSWORD: "${DB_PASSWORD}"
+          PGDATA: "/var/lib/postgresql/data/pgdata"
+        volumes:
+          - name: "postgres-data"
+            mount_path: "/var/lib/postgresql/data"
+            size: "100 GB"
+            storage_class: "fast-ssd"
+            access_mode: "ReadWriteOnce"
+        health_check:
+          type: "exec"
+          command: [ "pg_isready", "-U", "dbuser" ]
+          initial_delay: 30
+          period: 10
+          timeout: 5
+          failure_threshold: 3
+        backup_policy:
+          enabled: true
+          schedule: "0 2 * * *"
+          retention_days: 7
+        allocated_capacity:
+          node_id: "cloud-node-02.eu-central.swarm"
+          reservation_id: "res-20251105-002"
+          cpu_cores: [ 12, 13, 14, 15 ]
+          memory_range: "0x3000000000-0x3400000000"
+          storage_volume: "/dev/nvme1n1p3"
+
+    # Cache Deployment Instruction
+    cache_deployment:
+      type: tosca.nodes.DeploymentInstruction
+      properties:
+        component_name: "redis_cache"
+        target_node: "edge-node-03.eu-central.swarm"
+        target_namespace: "webapp-prod"
+        deployment_order: 4
+        replicas: 2
+        image: "redis:7-alpine"
+        resource_allocation:
+          cpu: "2 cores"
+          memory: "2 GB"
+          storage: "10 GB"
+        ports:
+          - container_port: 6379
+            host_port: 6379
+            protocol: "TCP"
+        command: [ "redis-server", "--maxmemory", "1gb", "--maxmemory-policy", "allkeys-lru" ]
+        health_check:
+          type: "tcp"
+          port: 6379
+          initial_delay: 15
+          period: 10
+          timeout: 5
+          failure_threshold: 3
+        allocated_capacity:
+          node_id: "edge-node-03.eu-central.swarm"
+          reservation_id: "res-20251105-003"
+          cpu_cores: [ 2, 3 ]
+          memory_range: "0x4000000000-0x4080000000"
+
+    # Ingress Configuration
+    ingress_config:
+      type: tosca.nodes.LoadBalancer.Ingress
+      properties:
+        ingress_class: "nginx"
+        host: "webapp.swarmchestrate.eu"
+        tls_enabled: true
+        tls_secret: "webapp-tls-cert"
+        annotations:
+          nginx.ingress.kubernetes.io/ssl-redirect: "true"
+          nginx.ingress.kubernetes.io/rate-limit: "100"
+        rules:
+          - path: "/"
+            path_type: "Prefix"
+            backend_service: "frontend-service"
+            backend_port: 80
+          - path: "/api"
+            path_type: "Prefix"
+            backend_service: "backend-service"
+            backend_port: 8080
+      requirements:
+        - routes_to: frontend_deployment
+        - routes_to: backend_deployment
+
+  # Deployment Workflow
+  workflows:
+    deployment_workflow:
+      description: "Main deployment workflow with ordered execution"
+      steps:
+        - step_1_validate:
+            target: deployment_plan
+            activities:
+              - call_operation: validate_plan
+              - set_state: validating
+
+        - step_2_reserve_resources:
+            target: deployment_plan
+            activities:
+              - call_operation: reserve_capacity
+              - set_state: resources_reserved
+
+        - step_3_deploy_database:
+            target: database_deployment
+            activities:
+              - call_operation: deploy
+              - set_state: deployed
+            on_success: step_4_deploy_cache
+
+        - step_4_deploy_cache:
+            target: cache_deployment
+            activities:
+              - call_operation: deploy
+              - set_state: deployed
+            on_success: step_5_deploy_backend
+
+        - step_5_deploy_backend:
+            target: backend_deployment
+            activities:
+              - call_operation: deploy
+              - set_state: deployed
+            on_success: step_6_deploy_frontend
+
+        - step_6_deploy_frontend:
+            target: frontend_deployment
+            activities:
+              - call_operation: deploy
+              - set_state: deployed
+            on_success: step_7_configure_ingress
+
+        - step_7_configure_ingress:
+            target: ingress_config
+            activities:
+              - call_operation: configure
+              - set_state: configured
+            on_success: step_8_health_check
+
+        - step_8_health_check:
+            target: deployment_plan
+            activities:
+              - call_operation: verify_health
+              - set_state: healthy
+            on_success: step_9_complete
+
+        - step_9_complete:
+            target: deployment_plan
+            activities:
+              - call_operation: finalize_deployment
+              - set_state: completed
+
+    rollback_workflow:
+      description: "Rollback workflow in case of deployment failure"
+      steps:
+        - rollback_step_1:
+            target: deployment_plan
+            activities:
+              - call_operation: initiate_rollback
+              - set_state: rolling_back
+
+        - rollback_step_2:
+            target: frontend_deployment
+            activities:
+              - call_operation: undeploy
+              - set_state: removed
+
+        - rollback_step_3:
+            target: backend_deployment
+            activities:
+              - call_operation: undeploy
+              - set_state: removed
+
+        - rollback_step_4:
+            target: cache_deployment
+            activities:
+              - call_operation: undeploy
+              - set_state: removed
+
+        - rollback_step_5:
+            target: database_deployment
+            activities:
+              - call_operation: undeploy
+              - set_state: removed
+
+        - rollback_step_6:
+            target: deployment_plan
+            activities:
+              - call_operation: release_resources
+              - set_state: rolled_back
+
+  policies:
+    - deployment_timeout:
+        type: tosca.policies.Timeout
+        properties:
+          timeout: 1800  # 30 minutes
+          action_on_timeout: "rollback"
+
+    - failure_handling:
+        type: tosca.policies.FailureHandling
+        properties:
+          max_retries: 3
+          retry_interval: 60
+          rollback_on_failure: true
+
+    - monitoring_policy:
+        type: tosca.policies.Monitoring
+        properties:
+          enabled: true
+          metrics:
+            - deployment_progress
+            - resource_utilization
+            - error_rate
+          alert_on:
+            - deployment_failure
+            - health_check_failure
+            - resource_exhaustion
+
+  outputs:
+    deployment_id:
+      description: Unique deployment identifier
+      value: "deploy-2025-11-05-103045-xyz"
+
+    deployment_status:
+      description: Current deployment status
+      value: "ready_for_deployment"
+
+    allocated_nodes:
+      description: List of allocated nodes
+      value:
+        - "edge-node-01.eu-central.swarm"
+        - "cloud-node-02.eu-central.swarm"
+        - "edge-node-03.eu-central.swarm"
+
+    estimated_deployment_time:
+      description: Estimated time to complete deployment
+      value: "15 minutes"
+
+    application_endpoints:
+      description: Application access endpoints after deployment
+      value:
+        web_ui: "https://webapp.swarmchestrate.eu"
+        api: "https://webapp.swarmchestrate.eu/api"
+        monitoring: "https://webapp.swarmchestrate.eu/grafana"
+
+    resource_reservations:
+      description: Resource reservation details
+      value:
+        total_cpu: "12 cores"
+        total_memory: "30 GB"
+        total_storage: "150 GB"
+        estimated_cost: "$2.15/hour"
