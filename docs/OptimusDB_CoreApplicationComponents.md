@@ -562,7 +562,7 @@ Run with `-benchmark` flag:
 ```
 
 Results written to:
-- `<repo>_benchmark` (JSON)
+- `repo_benchmark` (JSON)
     - Console output
     - BenchmarkResults.json
 
@@ -578,7 +578,7 @@ Results written to:
     **Production**:
     ```bash
     ./optimusdb -repo prod -http -port 18001 -autodiscovery-dht \
-    -bootstrap "<peer1>,<peer2>,<peer3>" -metrics
+    -bootstrap "peer1,peer2,peer3" -metrics
                 ```
 
                 **Testing**:

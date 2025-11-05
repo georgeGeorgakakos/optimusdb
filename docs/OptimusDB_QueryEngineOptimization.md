@@ -919,7 +919,7 @@ return results, nil
 lastErr = err
 
 // Exponential backoff
-backoff := time.Duration(1<<uint(i)) * time.Second
+backoff := time.Duration(1 uint(i)) * time.Second
 time.Sleep(backoff)
 }
 

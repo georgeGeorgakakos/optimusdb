@@ -115,7 +115,7 @@ Upload a Base64-encoded TOSCA YAML file for parsing, IPFS persistence, and Orbit
 #### Request
 ```json
 {
-"file": "<Base64-encoded YAML>",
+"file": "Base64-encoded YAML",
     "filename": "renewable_topology.yaml"
     }
     ```

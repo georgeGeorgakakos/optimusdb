@@ -285,7 +285,7 @@ After deployment, you can verify they're separate:
 tcpdump -i any port 5353
 
 # Check GossipSub traffic (libp2p streams)
-ss -tunap | grep <your-libp2p-port>
+ss -tunap | grep your-libp2p-port
 
     # In logs, you'll see:
     [DISCOVERY] Found peer: ...        # ← Discovery channel

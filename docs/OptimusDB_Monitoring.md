@@ -76,16 +76,16 @@ Results: 4/4 tests passed
 #### Parameters
 
 ```powershell
--LogFile <string>
+-LogFile "string"
     Required. Path to OptimusDB log file.
     Example: "C:\optimusdb\logs\node1.log"
 
-    -RefreshInterval <int>
+    -RefreshInterval "int"
         Optional. Dashboard refresh interval in seconds (1-60).
         Default: 5
         Example: -RefreshInterval 10
 
-        -Mode <string>
+        -Mode "string"
             Optional. Monitor mode: Dashboard, Stream, or Quick
             Default: Dashboard
             Example: -Mode Stream

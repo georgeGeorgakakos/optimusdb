@@ -186,9 +186,9 @@ The Swarmchestrate Knowledge Base uses **5 distinct TOSCA file types** across di
 
 | Mode | Use Case | Target Format |
 |------|----------|---------------|
-| **lb** | Production, external access | `http://<node-ip>:<service-port>` |
-        | **pod** | Testing, direct access | `http://<pod-ip>:8089` |
-            | **headless** | Internal cluster | `http://<pod-name>.optimusdb-headless.<ns>.svc.cluster.local:8089` |
+| **lb** | Production, external access | `http://node-ip:service-port` |
+        | **pod** | Testing, direct access | `http://pod-ip:8089` |
+            | **headless** | Internal cluster | `http://pod-name.optimusdb-headless.ns.svc.cluster.local:8089` |
 
                     **Usage Examples:**
                     ```powershell

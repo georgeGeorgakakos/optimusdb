@@ -590,9 +590,9 @@ Handles file I/O for database files.
 **File Structure**:
 ```
 database/
-├── <table>.dat         # Data file
-    ├── <table>.idx         # Index file
-        ├── <table>.wal         # WAL file
+├── table.dat         # Data file
+    ├── table.idx         # Index file
+        ├── table.wal         # WAL file
             └── metadata            # Database metadata
             ```
 

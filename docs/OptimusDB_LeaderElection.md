@@ -436,7 +436,7 @@ Total:                      5         ~5KB        ~300B/s avg
 ```
 [DEBUG STATE] Output:
 ├─ Role: Coordinator | Follower
-├─ Leader: <peer-id>
+├─ Leader: peer-id
     ├─ IsElecting: true | false
     ├─ Votes: map[node1:2 node2:1]
     ├─ VotedNodes: map[voter1:node1 voter2:node1]

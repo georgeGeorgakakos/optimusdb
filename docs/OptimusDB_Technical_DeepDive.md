@@ -444,7 +444,7 @@ CID: /ipfs/Qm...xyz
 
 ### 4. **LibP2P Multiaddr**
 
-**Format**: `/<protocol>/<value>/<protocol>/<value>/...`
+**Format**: `/protocol/value/protocol/value/...`
 
 **Examples**:
 ```
