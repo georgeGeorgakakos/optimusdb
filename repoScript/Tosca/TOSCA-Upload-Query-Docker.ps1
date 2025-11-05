@@ -80,8 +80,15 @@ function Test-CommandExists {
 function ConvertTo-Base64 {
     param([string]$FilePath)
 
+    # Resolve to absolute path
+    if (-not [System.IO.Path]::IsPathRooted($FilePath)) {
+        $FilePath = Join-Path (Get-Location).Path $FilePath
+    }
+
     if (-not (Test-Path $FilePath)) {
         Write-Error "File not found: $FilePath"
+        Write-Host "Current directory: $(Get-Location)" -ForegroundColor Yellow
+        Write-Host "Looking for: $FilePath" -ForegroundColor Yellow
         exit 1
     }
 
@@ -234,28 +241,36 @@ function Invoke-ToscaUpload {
     Write-Host "Target: $BaseUrl/$Context/upload" -ForegroundColor Gray
     Write-Host "TOSCA Type: $ToscaType" -ForegroundColor Gray
 
-    if (-not (Test-Path $ToscaFile)) {
-        Write-Error "TOSCA file not found: $ToscaFile"
+    # Resolve to absolute path
+    $resolvedPath = $ToscaFile
+    if (-not [System.IO.Path]::IsPathRooted($ToscaFile)) {
+        $resolvedPath = Join-Path (Get-Location).Path $ToscaFile
+    }
+
+    Write-Host "File path: $resolvedPath" -ForegroundColor Gray
+
+    if (-not (Test-Path $resolvedPath)) {
+        Write-Error "TOSCA file not found: $resolvedPath"
+        Write-Host "Current directory: $(Get-Location)" -ForegroundColor Yellow
         return
     }
 
     # Read file info
-    $fileInfo = Get-Item $ToscaFile
+    $fileInfo = Get-Item $resolvedPath
     $fileSize = $fileInfo.Length
     Write-Host "File size: $([math]::Round($fileSize/1KB, 2)) KB" -ForegroundColor Gray
 
     # Convert to Base64
     Write-Host "Converting to Base64..." -ForegroundColor Gray
-    $base64Content = ConvertTo-Base64 -FilePath $ToscaFile
+    $base64Content = ConvertTo-Base64 -FilePath $resolvedPath
 
-    # Prepare upload payload
+    # Prepare upload payload - SIMPLIFIED FORMAT (matches working bash script)
     $uploadPayload = @{
         file = $base64Content
         filename = $script:FileName
-        tosca_type = $ToscaType
-        uploaded_by = $env:USERNAME
-        source_host = $env:COMPUTERNAME
     }
+
+    Write-Host "Payload size: $($uploadPayload.file.Length) chars" -ForegroundColor Gray
 
     # Upload
     Write-Host "Uploading to KB..." -ForegroundColor Gray
@@ -270,19 +285,23 @@ function Invoke-ToscaUpload {
     Write-Host "`nUpload Response:" -ForegroundColor Green
     $response | ConvertTo-Json -Depth 5 | Write-Host
 
-    # Extract template_id
+    # Extract template_id (supports multiple response shapes)
     $script:TemplateId = $null
-    if ($response.data.template_id) {
-        $script:TemplateId = $response.data.template_id
+
+    # Try all possible locations for template_id
+    if ($response.data) {
+        if ($response.data.template_id) {
+            $script:TemplateId = $response.data.template_id
+        } elseif ($response.data.templateId) {
+            $script:TemplateId = $response.data.templateId
+        }
     } elseif ($response.template_id) {
         $script:TemplateId = $response.template_id
-    } elseif ($response.data.templateId) {
-        $script:TemplateId = $response.data.templateId
     } elseif ($response.templateId) {
         $script:TemplateId = $response.templateId
     }
 
-    if ($script:TemplateId) {
+    if ($script:TemplateId -and $script:TemplateId -ne "null" -and $script:TemplateId -ne "") {
         Write-Host "`n✓ Template ID: $script:TemplateId" -ForegroundColor Green
     } else {
         Write-Warning "Could not extract template_id from response"

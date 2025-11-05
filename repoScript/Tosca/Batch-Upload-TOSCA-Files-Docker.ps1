@@ -126,9 +126,20 @@ Write-Host "╚═════════════════════�
 
 $fileNumber = 1
 foreach ($toscaConfig in $toscaFiles) {
-    $filePath = Join-Path $ToscaDirectory $toscaConfig.File
+    # Resolve the full path to handle relative paths correctly
+    if ([System.IO.Path]::IsPathRooted($ToscaDirectory)) {
+        $filePath = Join-Path $ToscaDirectory $toscaConfig.File
+    } else {
+        $fullDirectory = Resolve-Path $ToscaDirectory -ErrorAction SilentlyContinue
+        if ($fullDirectory) {
+            $filePath = Join-Path $fullDirectory $toscaConfig.File
+        } else {
+            $filePath = Join-Path (Get-Location).Path $toscaConfig.File
+        }
+    }
 
     Write-Host "`n[$fileNumber/$($toscaFiles.Count)] Processing: $($toscaConfig.File)" -ForegroundColor Yellow
+    Write-Host "    Full Path:   $filePath" -ForegroundColor Gray
     Write-Host "    Type:        $($toscaConfig.Type)" -ForegroundColor Gray
     Write-Host "    Description: $($toscaConfig.Description)" -ForegroundColor Gray
     Write-Host "    Datastore:   $($toscaConfig.Datastore)" -ForegroundColor Gray
