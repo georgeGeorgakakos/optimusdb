@@ -368,7 +368,7 @@ The Swarmchestrate Knowledge Base uses **5 distinct TOSCA file types** across di
                     │
                     ┌────────────────────┴────────────────────────────────────┐
                     │              KB Agent API Layer                         │
-                    │  (REST API: /upload, /command, /peers, /log)           │
+                    │  (REST API: /upload, /command, /peers, /log)            │
                     └────────────────────┬────────────────────────────────────┘
                     │
                     ┌────────────┴────────────┐
@@ -378,13 +378,13 @@ The Swarmchestrate Knowledge Base uses **5 distinct TOSCA file types** across di
                     │  Agent (KBc)   │◄────►│  Agents (KBf)   │
                     └───────┬────────┘      └────────┬────────┘
                     │                        │
-                    ┌───────┴────────────────────────┴────────┐
-                    │          Data Store Layer               │
-                    │  ┌──────────┐  ┌────────┐  ┌─────────┐ │
-                    │  │ OrbitDB  │  │ SQLite │  │  IPFS   │ │
-                    │  │(Document)│  │(Metadata)│ │(Storage)│ │
-                    │  └──────────┘  └────────┘  └─────────┘ │
-                    └─────────────────────────────────────────┘
+                    ┌───────┴────────────────────────┴──────────┐
+                    │          Data Store Layer                 │
+                    │  ┌──────────┐  ┌──────────┐  ┌─────────┐  │
+                    │  │ OrbitDB  │  │ SQLite   │  │  IPFS   │  │
+                    │  │(Document)│  │(Metadata)│  │(Storage)│  │
+                    │  └──────────┘  └──────────┘  └─────────┘  │
+                    └───────────────────────────────────────────┘
                     │
                     ┌───────┴─────────────────────────────────┐
                     │        Network Layer (libp2p)           │
@@ -419,105 +419,105 @@ The Swarmchestrate Knowledge Base uses **5 distinct TOSCA file types** across di
                     # Check all namespaces
                     kubectl get svc --all-namespaces | Select-String "optimusdb"
 
-                    # Use correct namespace
-                    .\TOSCA-Upload-Query.ps1 -Namespace <correct-namespace>
-                        ```
+                    # Use correct namespace (replace with your actual namespace)
+                    .\TOSCA-Upload-Query.ps1 -Namespace your-namespace-here
+                    ```
 
-                        #### Issue: "Connection timeout"
-                        ```powershell
-                        # Check pod status
-                        kubectl get pods -n default
+                    #### Issue: "Connection timeout"
+                    ```powershell
+                    # Check pod status
+                    kubectl get pods -n default
 
-                        # Check pod logs
-                        kubectl logs optimusdb-0 -n default
+                    # Check pod logs
+                    kubectl logs optimusdb-0 -n default
 
-                        # Try different mode
-                        .\TOSCA-Upload-Query.ps1 -Mode pod
-                        ```
+                    # Try different mode
+                    .\TOSCA-Upload-Query.ps1 -Mode pod
+                    ```
 
-                        #### Issue: "Execution Policy Error"
-                        ```powershell
-                        # Temporarily bypass
-                        Set-ExecutionPolicy -ExecutionPolicy Bypass -Scope Process
+                    #### Issue: "Execution Policy Error"
+                    ```powershell
+                    # Temporarily bypass
+                    Set-ExecutionPolicy -ExecutionPolicy Bypass -Scope Process
 
-                        # Or run with bypass
-                        powershell -ExecutionPolicy Bypass -File .\TOSCA-Upload-Query.ps1
-                        ```
+                    # Or run with bypass
+                    powershell -ExecutionPolicy Bypass -File .\TOSCA-Upload-Query.ps1
+                    ```
 
-                        ---
+                    ---
 
-                        ## 📈 Best Practices
+                    ## 📈 Best Practices
 
-                        ### 1. File Management
-                        - ✓ Use descriptive filenames with versions
-                        - ✓ Include TOSCA type in filename
-                        - ✓ Keep original files as backup
+                    ### 1. File Management
+                    - ✓ Use descriptive filenames with versions
+                    - ✓ Include TOSCA type in filename
+                    - ✓ Keep original files as backup
 
-                        ### 2. Upload Strategy
-                        - ✓ Use batch script for initial setup
-                        - ✓ Use single upload for updates
-                        - ✓ Set appropriate delays for batch uploads
+                    ### 2. Upload Strategy
+                    - ✓ Use batch script for initial setup
+                    - ✓ Use single upload for updates
+                    - ✓ Set appropriate delays for batch uploads
 
-                        ### 3. Query Optimization
-                        - ✓ Use specific queries (by ID) when possible
-                        - ✓ Limit result sets appropriately
-                        - ✓ Export results for analysis
+                    ### 3. Query Optimization
+                    - ✓ Use specific queries (by ID) when possible
+                    - ✓ Limit result sets appropriately
+                    - ✓ Export results for analysis
 
-                        ### 4. Monitoring
-                        - ✓ Check peer lists regularly
-                        - ✓ Review agent logs for errors
-                        - ✓ Monitor storage statistics
+                    ### 4. Monitoring
+                    - ✓ Check peer lists regularly
+                    - ✓ Review agent logs for errors
+                    - ✓ Monitor storage statistics
 
-                        ### 5. Security
-                        - ✓ Use kubectl authentication
-                        - ✓ Encrypt sensitive data in TOSCA files
-                        - ✓ Use LoadBalancer mode in production
+                    ### 5. Security
+                    - ✓ Use kubectl authentication
+                    - ✓ Encrypt sensitive data in TOSCA files
+                    - ✓ Use LoadBalancer mode in production
 
-                        ---
+                    ---
 
-                        ## 📚 Additional Resources
+                    ## 📚 Additional Resources
 
-                        ### Documentation Files
-                        - **TOSCA_Files_in_Swarmchestrate.md** - Architecture and datastore types
-                        - **TOSCA-PowerShell-Usage-Guide.md** - Complete usage guide
+                    ### Documentation Files
+                    - **TOSCA_Files_in_Swarmchestrate.md** - Architecture and datastore types
+                    - **TOSCA-PowerShell-Usage-Guide.md** - Complete usage guide
 
-                        ### Sample Files
-                        - All 5 TOSCA sample files with detailed comments
-                        - Realistic configurations for production use
+                    ### Sample Files
+                    - All 5 TOSCA sample files with detailed comments
+                    - Realistic configurations for production use
 
-                        ### Support
-                        - Review D3.1 deliverable document for architecture details
-                        - Check OptimusDB documentation for API reference
-                        - TOSCA specification: https://docs.oasis-open.org/tosca/
+                    ### Support
+                    - Review D3.1 deliverable document for architecture details
+                    - Check OptimusDB documentation for API reference
+                    - TOSCA specification: https://docs.oasis-open.org/tosca/
 
-                        ---
+                    ---
 
-                        ## 📝 Summary
+                    ## 📝 Summary
 
-                        This suite provides everything needed to manage TOSCA files in the Swarmchestrate Knowledge Base:
+                    This suite provides everything needed to manage TOSCA files in the Swarmchestrate Knowledge Base:
 
-                        ✅ **5 Sample TOSCA files** covering all datastore types
-                        ✅ **3 PowerShell scripts** for upload, batch, and query operations
-                        ✅ **2 Documentation files** with detailed guides and examples
-                        ✅ **Multiple discovery modes** for different deployment scenarios
-                        ✅ **Advanced queries** for search, filter, and analysis
-                        ✅ **Complete workflows** for real-world scenarios
+                    ✅ **5 Sample TOSCA files** covering all datastore types
+                    ✅ **3 PowerShell scripts** for upload, batch, and query operations
+                    ✅ **2 Documentation files** with detailed guides and examples
+                    ✅ **Multiple discovery modes** for different deployment scenarios
+                    ✅ **Advanced queries** for search, filter, and analysis
+                    ✅ **Complete workflows** for real-world scenarios
 
-                        **Get Started:**
-                        ```powershell
-                        # Upload all samples
-                        .\Batch-Upload-TOSCA-Files.ps1
+                    **Get Started:**
+                    ```powershell
+                    # Upload all samples
+                    .\Batch-Upload-TOSCA-Files.ps1
 
-                        # Query recent uploads
-                        .\TOSCA-Query.ps1 -QueryType Recent -Limit 10
+                    # Query recent uploads
+                    .\TOSCA-Query.ps1 -QueryType Recent -Limit 10
 
-                        # Get statistics
-                        .\TOSCA-Query.ps1 -QueryType Statistics
-                        ```
+                    # Get statistics
+                    .\TOSCA-Query.ps1 -QueryType Statistics
+                    ```
 
-                        ---
+                    ---
 
-                        **Version:** 2.0
-                        **Date:** November 2025
-                        **Platform:** PowerShell 5.1+ / PowerShell Core 7+
-                        **License:** As per Swarmchestrate project
+                    **Version:** 2.0
+                    **Date:** November 2025
+                    **Platform:** PowerShell 5.1+ / PowerShell Core 7+
+                    **License:** As per Swarmchestrate project
