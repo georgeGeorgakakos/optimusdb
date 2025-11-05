@@ -1,71 +1,31 @@
 <#
 .SYNOPSIS
-    OptimusDB TOSCA Upload and Query Script for Swarmchestrate Knowledge Base
+    OptimusDB TOSCA Upload and Query Script for Docker Desktop
 
 .DESCRIPTION
-    PowerShell script to upload TOSCA files to the decentralized Knowledge Base (OptimusDB)
-    and query them afterwards. Supports multiple discovery modes: LoadBalancer, Pod IP, and Headless DNS.
-
-    Based on the Swarmchestrate architecture, this script interacts with the KB agents to:
-    - Upload TOSCA files (Application Descriptions, Capacity Descriptions, Deployment Plans, etc.)
-    - Store them in OrbitDB and SQLite datastores
-    - Retrieve and query the stored TOSCA templates
-    - Verify replication across distributed KB agents
+    PowerShell script to upload TOSCA files to OptimusDB containers running in Docker Desktop.
+    Automatically discovers running OptimusDB containers and their ports.
 
 .PARAMETER ToscaFile
     Path to the TOSCA YAML file to upload
 
-.PARAMETER Port
-    Port number for the service (default: 18001 for LoadBalancer, 8089 for Pod/Headless)
-
 .PARAMETER Context
     API context path (default: swarmkb)
 
-.PARAMETER Namespace
-    Kubernetes namespace where OptimusDB is deployed (default: default)
-
-.PARAMETER Mode
-    Discovery mode: 'lb' (LoadBalancer), 'pod' (Pod IPs), or 'headless' (Headless DNS)
-    Default: lb
-
-.PARAMETER ContainerPort
-    Container port for pod/headless modes (default: 8089)
-
 .PARAMETER ToscaType
-    Type of TOSCA file being uploaded (for metadata):
-    - ApplicationDescription
-    - CapacityDescription
-    - OpenTofuTemplate
-    - DeploymentPlan
-    - ApplicationRequirements
+    Type of TOSCA file being uploaded (for metadata)
+
+.PARAMETER ContainerPattern
+    Docker container name pattern (default: optimusdb*)
+
+.PARAMETER UseLocalhost
+    Use localhost instead of container IPs (default: true for Docker Desktop)
 
 .EXAMPLE
-    .\TOSCA-Upload-Query.ps1 -ToscaFile "sample_1_application_description.yaml" -Mode lb
+    .\TOSCA-Upload-Query-Docker.ps1 -ToscaFile "sample_1_application_description.yaml" -ToscaType ApplicationDescription
 
 .EXAMPLE
-    .\TOSCA-Upload-Query.ps1 -ToscaFile "sample_2_capacity_description.yaml" -Port 8089 -Mode pod
-
-.EXAMPLE
-    .\TOSCA-Upload-Query.ps1 -ToscaFile "sample_4_deployment_release_plan.yaml" -Mode headless -ToscaType DeploymentPlan
-
-.EXAMPLE
-    # Upload all sample TOSCA files
-    .\TOSCA-Upload-Query.ps1 -ToscaFile "sample_1_application_description.yaml" -ToscaType ApplicationDescription
-    .\TOSCA-Upload-Query.ps1 -ToscaFile "sample_2_capacity_description.yaml" -ToscaType CapacityDescription
-    .\TOSCA-Upload-Query.ps1 -ToscaFile "sample_3_opentofu_tosca_template.yaml" -ToscaType OpenTofuTemplate
-    .\TOSCA-Upload-Query.ps1 -ToscaFile "sample_4_deployment_release_plan.yaml" -ToscaType DeploymentPlan
-    .\TOSCA-Upload-Query.ps1 -ToscaFile "sample_5_application_requirements.yaml" -ToscaType ApplicationRequirements
-
-.NOTES
-    Author: Swarmchestrate Team
-    Version: 2.0
-    Requires: kubectl, PowerShell 5.1+
-
-    The script supports the Swarmchestrate KB architecture with:
-    - Coordinator and Follower agents
-    - OrbitDB for decentralized storage
-    - SQLite for structured queries
-    - IPFS for content-addressed storage
+    .\TOSCA-Upload-Query-Docker.ps1 -ToscaFile "sample_2_capacity_description.yaml" -ToscaType CapacityDescription
 #>
 
 [CmdletBinding()]
@@ -74,24 +34,17 @@ param(
     [string]$ToscaFile = "sample_1_application_description.yaml",
 
     [Parameter(Mandatory=$false)]
-    [int]$Port = 18001,
-
-    [Parameter(Mandatory=$false)]
     [string]$Context = "swarmkb",
 
     [Parameter(Mandatory=$false)]
-    [string]$Namespace = "default",
-
-    [Parameter(Mandatory=$false)]
-    [ValidateSet("lb", "pod", "headless")]
-    [string]$Mode = "lb",
-
-    [Parameter(Mandatory=$false)]
-    [int]$ContainerPort = 8089,
-
-    [Parameter(Mandatory=$false)]
     [ValidateSet("ApplicationDescription", "CapacityDescription", "OpenTofuTemplate", "DeploymentPlan", "ApplicationRequirements", "Unknown")]
-    [string]$ToscaType = "Unknown"
+    [string]$ToscaType = "Unknown",
+
+    [Parameter(Mandatory=$false)]
+    [string]$ContainerPattern = "optimusdb*",
+
+    [Parameter(Mandatory=$false)]
+    [bool]$UseLocalhost = $true
 )
 
 # ============================================================
@@ -118,7 +71,7 @@ function Test-CommandExists {
     $exists = $null -ne (Get-Command $Command -ErrorAction SilentlyContinue)
     if (-not $exists) {
         Write-Error "Required command not found: $Command"
-        Write-Host "Please ensure kubectl is installed and in your PATH" -ForegroundColor Red
+        Write-Host "Please ensure Docker is installed and in your PATH" -ForegroundColor Red
         exit 1
     }
     return $exists
@@ -180,128 +133,68 @@ function Invoke-SafeRestMethod {
 }
 
 # ============================================================
-# Discovery Functions
+# Docker Discovery Functions
 # ============================================================
 
-function Get-Targets {
-    Write-Section "0) Discovering KB Agent Endpoints - Mode: $Mode"
+function Get-DockerTargets {
+    Write-Section "0) Discovering OptimusDB Docker Containers"
 
-    switch ($Mode) {
-        "lb" {
-            # Get Node IPs
-            Write-Host "Discovering Kubernetes node IPs..." -ForegroundColor Green
+    Write-Host "Searching for containers matching pattern: $ContainerPattern" -ForegroundColor Green
 
-            # Use JSON output and parse with PowerShell (most reliable cross-platform)
-            $nodesJson = kubectl get nodes -o json 2>&1
+    # Get running containers
+    $containersJson = docker ps --filter "name=$ContainerPattern" --format "{{json .}}" 2>&1
 
-            if ($LASTEXITCODE -ne 0) {
-                Write-Error "Failed to get nodes"
-                exit 1
-            }
+    if ($LASTEXITCODE -ne 0) {
+        Write-Error "Failed to get Docker containers. Is Docker running?"
+        exit 1
+    }
 
-            $nodes = $nodesJson | ConvertFrom-Json
-            $nodeIps = $nodes.items | ForEach-Object {
-                $_.status.addresses | Where-Object { $_.type -eq "InternalIP" } | Select-Object -ExpandProperty address
-            }
-
-            if ($nodeIps.Count -eq 0) {
-                Write-Error "No node IPs found"
-                exit 1
-            }
-
-            Write-Host "Found $($nodeIps.Count) node(s): $($nodeIps -join ', ')" -ForegroundColor Green
-
-            # Get LoadBalancer Services
-            Write-Host "Discovering OptimusDB LoadBalancer services in namespace: $Namespace..." -ForegroundColor Green
-            $servicesJson = kubectl -n $Namespace get svc -o json 2>&1
-
-            if ($LASTEXITCODE -ne 0) {
-                Write-Error "Failed to get services"
-                exit 1
-            }
-
-            $services = ($servicesJson | ConvertFrom-Json).items |
-                    Where-Object { $_.metadata.name -match '^optimusdb\d+$' }
-
-            if ($services.Count -eq 0) {
-                Write-Error "No optimusdb* LoadBalancer services found in namespace: $Namespace"
-                exit 1
-            }
-
-            Write-Host "Found $($services.Count) OptimusDB service(s)" -ForegroundColor Green
-
-            # Build target URLs
-            foreach ($svc in $services) {
-                $svcName = $svc.metadata.name
-                $svcPort = $svc.spec.ports[0].port
-
-                foreach ($ip in $nodeIps) {
-                    $target = "http://${ip}:${svcPort}"
-                    $script:Targets += $target
-                    Write-Host "  - $target ($svcName)" -ForegroundColor Gray
-                }
-            }
+    # Parse container information
+    $containers = $containersJson | ForEach-Object {
+        if ($_ -match '^\{') {
+            $_ | ConvertFrom-Json
         }
+    }
 
-        "pod" {
-            Write-Host "Discovering OptimusDB pod IPs in namespace: $Namespace..." -ForegroundColor Green
-            $podsJson = kubectl -n $Namespace get pods -o json 2>&1
+    if (-not $containers -or $containers.Count -eq 0) {
+        Write-Error "No OptimusDB containers found matching pattern: $ContainerPattern"
+        Write-Host "`nTry running: docker ps" -ForegroundColor Yellow
+        Write-Host "Make sure your OptimusDB containers are running" -ForegroundColor Yellow
+        exit 1
+    }
 
-            if ($LASTEXITCODE -ne 0) {
-                Write-Error "Failed to get pods"
-                exit 1
-            }
+    Write-Host "Found $($containers.Count) running container(s)" -ForegroundColor Green
 
-            $pods = ($podsJson | ConvertFrom-Json).items |
-                    Where-Object { $_.metadata.name -match '^optimusdb\d+$' }
+    # Extract ports and build targets
+    foreach ($container in $containers) {
+        $containerName = $container.Names
+        $ports = $container.Ports
 
-            if ($pods.Count -eq 0) {
-                Write-Error "No optimusdb* pods found in namespace: $Namespace"
-                exit 1
-            }
+        # Parse port mappings (format: "0.0.0.0:18001->8089/tcp")
+        if ($ports -match '0\.0\.0\.0:(\d+)->8089') {
+            $hostPort = $Matches[1]
 
-            foreach ($pod in $pods) {
-                $podName = $pod.metadata.name
-                $podIp = $pod.status.podIP
-
-                if ($podIp -match '^\d+\.\d+\.\d+\.\d+$') {
-                    $target = "http://${podIp}:${ContainerPort}"
-                    $script:Targets += $target
-                    Write-Host "  - $target ($podName)" -ForegroundColor Gray
+            if ($UseLocalhost) {
+                $target = "http://localhost:${hostPort}"
+            } else {
+                # Get container IP
+                $containerIp = docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' $containerName 2>&1
+                if ($LASTEXITCODE -eq 0 -and $containerIp) {
+                    $target = "http://${containerIp}:8089"
+                } else {
+                    $target = "http://localhost:${hostPort}"
                 }
             }
 
-            if ($script:Targets.Count -eq 0) {
-                Write-Error "No valid pod IPs found"
-                exit 1
-            }
+            $script:Targets += $target
+            Write-Host "  - $target ($containerName)" -ForegroundColor Gray
         }
+    }
 
-        "headless" {
-            Write-Host "Using headless DNS names in namespace: $Namespace..." -ForegroundColor Green
-            $podsJson = kubectl -n $Namespace get pods -o json 2>&1
-
-            if ($LASTEXITCODE -ne 0) {
-                Write-Error "Failed to get pods"
-                exit 1
-            }
-
-            $pods = ($podsJson | ConvertFrom-Json).items |
-                    Where-Object { $_.metadata.name -match '^optimusdb-\d+$' } |
-                    Sort-Object { [int]($_.metadata.name -replace '.*-', '') }
-
-            if ($pods.Count -eq 0) {
-                Write-Error "No optimusdb-* pods found in namespace: $Namespace"
-                exit 1
-            }
-
-            foreach ($pod in $pods) {
-                $podName = $pod.metadata.name
-                $target = "http://${podName}.optimusdb-headless.${Namespace}.svc.cluster.local:${ContainerPort}"
-                $script:Targets += $target
-                Write-Host "  - $target" -ForegroundColor Gray
-            }
-        }
+    if ($script:Targets.Count -eq 0) {
+        Write-Error "No valid container ports found"
+        Write-Host "`nExpected port mapping format: 0.0.0.0:18001->8089/tcp" -ForegroundColor Yellow
+        exit 1
     }
 
     Write-Host "`nTotal targets discovered: $($script:Targets.Count)" -ForegroundColor Green
@@ -458,7 +351,6 @@ LIMIT 5;
 
     $commandUrl = "$BaseUrl/$Context/command"
     Write-Host "Executing SQL query..." -ForegroundColor Gray
-    Write-Host "SQL: $sql" -ForegroundColor Gray
 
     $response = Invoke-SafeRestMethod -Uri $commandUrl -Method POST -Body $queryPayload
 
@@ -501,7 +393,6 @@ LIMIT 5;
 
     $commandUrl = "$BaseUrl/$Context/command"
     Write-Host "Executing SQL query..." -ForegroundColor Gray
-    Write-Host "SQL: $sql" -ForegroundColor Gray
 
     $response = Invoke-SafeRestMethod -Uri $commandUrl -Method POST -Body $queryPayload
 
@@ -563,43 +454,12 @@ function Get-AgentLogs {
     }
 }
 
-# ============================================================
-# Advanced Query Functions
-# ============================================================
-
 function Invoke-AdvancedQueries {
     param([string]$BaseUrl)
 
     Write-Section "8) Advanced Queries - TOSCA Metadata Analysis"
 
-    # Query 1: Get all TOSCA files by type
-    if ($ToscaType -ne "Unknown") {
-        Write-Host "`nQuery: All TOSCA files of type '$ToscaType'" -ForegroundColor Cyan
-
-        $sql = @"
-SELECT filename, template_id, filesize_bytes, created_at, uploader
-FROM toscametadata
-WHERE description LIKE '%$ToscaType%' OR filename LIKE '%$ToscaType%'
-ORDER BY created_at DESC
-LIMIT 10;
-"@
-
-        $queryPayload = @{
-            method = @{
-                cmd = "sqldml"
-                argcnt = 1
-            }
-            sqldml = $sql
-        }
-
-        $response = Invoke-SafeRestMethod -Uri "$BaseUrl/$Context/command" -Method POST -Body $queryPayload
-
-        if ($response -ne $null) {
-            $response | ConvertTo-Json -Depth 10 | Write-Host
-        }
-    }
-
-    # Query 2: Get recent uploads
+    # Query: Get recent uploads
     Write-Host "`nQuery: Recent TOSCA uploads (last 24 hours)" -ForegroundColor Cyan
 
     $sql = @"
@@ -624,7 +484,7 @@ LIMIT 20;
         $response | ConvertTo-Json -Depth 10 | Write-Host
     }
 
-    # Query 3: Statistics
+    # Query: Statistics
     Write-Host "`nQuery: TOSCA storage statistics" -ForegroundColor Cyan
 
     $sql = @"
@@ -653,53 +513,6 @@ FROM toscametadata;
 }
 
 # ============================================================
-# Batch Operations
-# ============================================================
-
-function Invoke-BatchUpload {
-    param(
-        [string[]]$Files,
-        [string]$BaseUrl
-    )
-
-    Write-Section "Batch Upload - Multiple TOSCA Files"
-
-    $results = @()
-
-    foreach ($file in $Files) {
-        Write-Host "`n--- Processing: $file ---" -ForegroundColor Yellow
-
-        if (Test-Path $file) {
-            $script:ToscaFile = $file
-            $script:FileName = [System.IO.Path]::GetFileName($file)
-
-            Invoke-ToscaUpload -BaseUrl $BaseUrl
-
-            $results += @{
-                File = $file
-                TemplateId = $script:TemplateId
-                Success = ($script:TemplateId -ne $null)
-            }
-
-            Start-Sleep -Seconds 2
-        } else {
-            Write-Warning "File not found: $file"
-            $results += @{
-                File = $file
-                TemplateId = $null
-                Success = $false
-            }
-        }
-    }
-
-    Write-Host "`n--- Batch Upload Summary ---" -ForegroundColor Green
-    $results | ForEach-Object {
-        $status = if ($_.Success) { "✓" } else { "✗" }
-        Write-Host "$status $($_.File) - Template ID: $($_.TemplateId)" -ForegroundColor $(if ($_.Success) { "Green" } else { "Red" })
-    }
-}
-
-# ============================================================
 # Main Execution
 # ============================================================
 
@@ -707,26 +520,24 @@ function Main {
     Write-Host @"
 ╔════════════════════════════════════════════════════════════════╗
 ║    Swarmchestrate Knowledge Base - TOSCA Upload & Query       ║
-║                    OptimusDB Integration                       ║
+║              OptimusDB Docker Desktop Integration              ║
 ╚════════════════════════════════════════════════════════════════╝
 "@ -ForegroundColor Cyan
 
     Write-Host "`nConfiguration:" -ForegroundColor Yellow
     Write-Host "  TOSCA File:      $ToscaFile" -ForegroundColor Gray
     Write-Host "  TOSCA Type:      $ToscaType" -ForegroundColor Gray
-    Write-Host "  Port:            $Port" -ForegroundColor Gray
     Write-Host "  Context:         $Context" -ForegroundColor Gray
-    Write-Host "  Namespace:       $Namespace" -ForegroundColor Gray
-    Write-Host "  Mode:            $Mode" -ForegroundColor Gray
-    Write-Host "  Container Port:  $ContainerPort" -ForegroundColor Gray
+    Write-Host "  Container Pattern: $ContainerPattern" -ForegroundColor Gray
+    Write-Host "  Use Localhost:   $UseLocalhost" -ForegroundColor Gray
 
     # Check dependencies
     Write-Host "`nChecking dependencies..." -ForegroundColor Yellow
-    Test-CommandExists -Command "kubectl"
-    Write-Host "✓ kubectl is available" -ForegroundColor Green
+    Test-CommandExists -Command "docker"
+    Write-Host "✓ Docker is available" -ForegroundColor Green
 
-    # Discover targets
-    Get-Targets
+    # Discover Docker containers
+    Get-DockerTargets
 
     if ($script:Targets.Count -eq 0) {
         Write-Error "No targets discovered"

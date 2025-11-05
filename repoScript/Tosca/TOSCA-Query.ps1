@@ -1,29 +1,70 @@
 <#
 .SYNOPSIS
-    Batch upload all Swarmchestrate TOSCA sample files to OptimusDB Knowledge Base
+    Advanced TOSCA Query and Retrieval Script for Swarmchestrate Knowledge Base
 
 .DESCRIPTION
-    This script uploads all 5 types of TOSCA files created for the Swarmchestrate
-    decentralized Knowledge Base system. It demonstrates the complete lifecycle of
-    TOSCA file management across different datastores.
+    Query and retrieve TOSCA files from the decentralized Knowledge Base without uploading.
+    Provides advanced search, filtering, and analysis capabilities.
 
 .PARAMETER Mode
-    Discovery mode: 'lb' (LoadBalancer), 'pod' (Pod IPs), or 'headless' (Headless DNS)
+    Discovery mode: 'lb', 'pod', or 'headless'
 
 .PARAMETER Namespace
-    Kubernetes namespace where OptimusDB is deployed (default: default)
+    Kubernetes namespace (default: default)
 
-.PARAMETER ToscaDirectory
-    Directory containing the TOSCA sample files (default: current directory)
+.PARAMETER QueryType
+    Type of query to execute:
+    - ByFilename: Search by filename
+    - ByTemplateId: Search by template ID
+    - ByType: Search by TOSCA type
+    - ByUploader: Search by uploader
+    - ByDateRange: Search by date range
+    - Recent: Get recent uploads
+    - Statistics: Get storage statistics
+    - All: Get all TOSCA files
+
+.PARAMETER SearchValue
+    Search value (filename, template_id, uploader, etc.)
+
+.PARAMETER ToscaType
+    TOSCA type filter
+
+.PARAMETER StartDate
+    Start date for date range queries (format: yyyy-MM-dd)
+
+.PARAMETER EndDate
+    End date for date range queries (format: yyyy-MM-dd)
+
+.PARAMETER Limit
+    Maximum number of results to return (default: 10)
 
 .EXAMPLE
-    .\Batch-Upload-TOSCA-Files.ps1
+    # Query by filename
+    .\TOSCA-Query.ps1 -QueryType ByFilename -SearchValue "sample_1_application_description.yaml"
 
 .EXAMPLE
-    .\Batch-Upload-TOSCA-Files.ps1 -Mode pod -Namespace swarmkb-ns
+    # Query by template ID
+    .\TOSCA-Query.ps1 -QueryType ByTemplateId -SearchValue "template-abc123"
 
 .EXAMPLE
-    .\Batch-Upload-TOSCA-Files.ps1 -ToscaDirectory "C:\tosca-samples"
+    # Get recent uploads
+    .\TOSCA-Query.ps1 -QueryType Recent -Limit 20
+
+.EXAMPLE
+    # Get statistics
+    .\TOSCA-Query.ps1 -QueryType Statistics
+
+.EXAMPLE
+    # Query by TOSCA type
+    .\TOSCA-Query.ps1 -QueryType ByType -ToscaType ApplicationDescription
+
+.EXAMPLE
+    # Query by date range
+    .\TOSCA-Query.ps1 -QueryType ByDateRange -StartDate "2025-11-01" -EndDate "2025-11-05"
+
+.EXAMPLE
+    # Query by uploader
+    .\TOSCA-Query.ps1 -QueryType ByUploader -SearchValue "admin"
 #>
 
 [CmdletBinding()]
@@ -35,229 +76,473 @@ param(
     [Parameter(Mandatory=$false)]
     [string]$Namespace = "default",
 
-    [Parameter(Mandatory=$false)]
-    [string]$ToscaDirectory = ".",
+    [Parameter(Mandatory=$true)]
+    [ValidateSet("ByFilename", "ByTemplateId", "ByType", "ByUploader", "ByDateRange", "Recent", "Statistics", "All")]
+    [string]$QueryType,
 
     [Parameter(Mandatory=$false)]
-    [int]$DelayBetweenUploads = 3
+    [string]$SearchValue,
+
+    [Parameter(Mandatory=$false)]
+    [ValidateSet("ApplicationDescription", "CapacityDescription", "OpenTofuTemplate", "DeploymentPlan", "ApplicationRequirements")]
+    [string]$ToscaType,
+
+    [Parameter(Mandatory=$false)]
+    [string]$StartDate,
+
+    [Parameter(Mandatory=$false)]
+    [string]$EndDate,
+
+    [Parameter(Mandatory=$false)]
+    [int]$Limit = 10,
+
+    [Parameter(Mandatory=$false)]
+    [int]$Port = 18001,
+
+    [Parameter(Mandatory=$false)]
+    [string]$Context = "swarmkb",
+
+    [Parameter(Mandatory=$false)]
+    [int]$ContainerPort = 8089
 )
 
-# TOSCA files configuration
-$toscaFiles = @(
-    @{
-        File = "sample_1_application_description.yaml"
-        Type = "ApplicationDescription"
-        Description = "E-commerce web application with microservices"
-        Datastore = "ADT Datastore"
-    },
-    @{
-        File = "sample_2_capacity_description.yaml"
-        Type = "CapacityDescription"
-        Description = "Edge cluster infrastructure capacity"
-        Datastore = "Capacity Descriptions Datastore"
-    },
-    @{
-        File = "sample_3_opentofu_tosca_template.yaml"
-        Type = "OpenTofuTemplate"
-        Description = "Hybrid Kubernetes infrastructure provisioning"
-        Datastore = "OpenTofu/TOSCA Templates Datastore"
-    },
-    @{
-        File = "sample_4_deployment_release_plan.yaml"
-        Type = "DeploymentPlan"
-        Description = "Executable deployment plan with resource allocations"
-        Datastore = "Deployment/Release Plans Datastore"
-    },
-    @{
-        File = "sample_5_application_requirements.yaml"
-        Type = "ApplicationRequirements"
-        Description = "ML training workload requirements with GPU"
-        Datastore = "N/A (Submitted)"
+# ============================================================
+# Global Variables
+# ============================================================
+
+$script:Targets = @()
+$script:Results = @()
+
+# ============================================================
+# Helper Functions
+# ============================================================
+
+function Write-Section {
+    param([string]$Message)
+    Write-Host "`n============================================================" -ForegroundColor Cyan
+    Write-Host $Message -ForegroundColor Yellow
+    Write-Host "============================================================" -ForegroundColor Cyan
+}
+
+function Invoke-SqlEscape {
+    param([string]$Text)
+    return $Text -replace "'", "''"
+}
+
+function Invoke-SafeRestMethod {
+    param(
+        [string]$Uri,
+        [string]$Method = "GET",
+        [object]$Body = $null,
+        [int]$TimeoutSec = 10
+    )
+
+    try {
+        $headers = @{
+            "Content-Type" = "application/json"
+        }
+
+        $params = @{
+            Uri = $Uri
+            Method = $Method
+            Headers = $headers
+            TimeoutSec = $TimeoutSec
+            ErrorAction = "Stop"
+        }
+
+        if ($Body -ne $null) {
+            if ($Body -is [string]) {
+                $params.Body = $Body
+            } else {
+                $params.Body = ($Body | ConvertTo-Json -Depth 10 -Compress)
+            }
+        }
+
+        $response = Invoke-RestMethod @params
+        return $response
+
+    } catch {
+        Write-Warning "Request failed: $($_.Exception.Message)"
+        return $null
     }
-)
+}
 
-Write-Host @"
+function Get-Targets {
+    Write-Section "Discovering KB Agent Endpoints - Mode: $Mode"
+
+    switch ($Mode) {
+        "lb" {
+            # Use JSON output and parse with PowerShell
+            $nodesJson = kubectl get nodes -o json 2>&1
+            if ($LASTEXITCODE -ne 0) { Write-Error "Failed to get node IPs"; exit 1 }
+
+            $nodes = $nodesJson | ConvertFrom-Json
+            $nodeIps = $nodes.items | ForEach-Object {
+                $_.status.addresses | Where-Object { $_.type -eq "InternalIP" } | Select-Object -ExpandProperty address
+            }
+            if ($nodeIps.Count -eq 0) { Write-Error "No node IPs found"; exit 1 }
+
+            $servicesJson = kubectl -n $Namespace get svc -o json 2>&1
+            if ($LASTEXITCODE -ne 0) { Write-Error "Failed to get services"; exit 1 }
+
+            $services = ($servicesJson | ConvertFrom-Json).items |
+                    Where-Object { $_.metadata.name -match '^optimusdb\d+$' }
+
+            if ($services.Count -eq 0) { Write-Error "No optimusdb services found"; exit 1 }
+
+            foreach ($svc in $services) {
+                $svcPort = $svc.spec.ports[0].port
+                foreach ($ip in $nodeIps) {
+                    $script:Targets += "http://${ip}:${svcPort}"
+                }
+            }
+        }
+
+        "pod" {
+            $podsJson = kubectl -n $Namespace get pods -o json 2>&1
+            if ($LASTEXITCODE -ne 0) { Write-Error "Failed to get pods"; exit 1 }
+
+            $pods = ($podsJson | ConvertFrom-Json).items |
+                    Where-Object { $_.metadata.name -match '^optimusdb\d+$' }
+
+            foreach ($pod in $pods) {
+                $podIp = $pod.status.podIP
+                if ($podIp -match '^\d+\.\d+\.\d+\.\d+$') {
+                    $script:Targets += "http://${podIp}:${ContainerPort}"
+                }
+            }
+        }
+
+        "headless" {
+            $podsJson = kubectl -n $Namespace get pods -o json 2>&1
+            if ($LASTEXITCODE -ne 0) { Write-Error "Failed to get pods"; exit 1 }
+
+            $pods = ($podsJson | ConvertFrom-Json).items |
+                    Where-Object { $_.metadata.name -match '^optimusdb\d+$' } |
+                    Sort-Object { [int]($_.metadata.name -replace '.*-', '') }
+
+            foreach ($pod in $pods) {
+                $podName = $pod.metadata.name
+                $script:Targets += "http://${podName}.optimusdb-headless.${Namespace}.svc.cluster.local:${ContainerPort}"
+            }
+        }
+    }
+
+    Write-Host "Discovered $($script:Targets.Count) target(s)" -ForegroundColor Green
+}
+
+# ============================================================
+# Query Functions
+# ============================================================
+
+function Invoke-Query {
+    param(
+        [string]$BaseUrl,
+        [string]$Sql
+    )
+
+    $queryPayload = @{
+        method = @{
+            cmd = "sqldml"
+            argcnt = 1
+        }
+        sqldml = $Sql
+    }
+
+    $commandUrl = "$BaseUrl/$Context/command"
+    $response = Invoke-SafeRestMethod -Uri $commandUrl -Method POST -Body $queryPayload
+
+    return $response
+}
+
+function Query-ByFilename {
+    param([string]$BaseUrl)
+
+    if (-not $SearchValue) {
+        Write-Error "SearchValue parameter is required for ByFilename query"
+        return
+    }
+
+    $filenameEscaped = Invoke-SqlEscape -Text $SearchValue
+
+    $sql = @"
+SELECT id, template_id, filename, filesize_bytes, content_sha256, ipfs_path,
+       uploader, source_pod, source_ip, description, node_templates_count, created_at
+FROM toscametadata
+WHERE filename='$filenameEscaped'
+ORDER BY created_at DESC
+LIMIT $Limit;
+"@
+
+    Write-Host "Searching for filename: $SearchValue" -ForegroundColor Gray
+    return Invoke-Query -BaseUrl $BaseUrl -Sql $sql
+}
+
+function Query-ByTemplateId {
+    param([string]$BaseUrl)
+
+    if (-not $SearchValue) {
+        Write-Error "SearchValue parameter is required for ByTemplateId query"
+        return
+    }
+
+    $templateIdEscaped = Invoke-SqlEscape -Text $SearchValue
+
+    $sql = @"
+SELECT id, template_id, filename, filesize_bytes, content_sha256, ipfs_path,
+       uploader, source_pod, source_ip, description, node_templates_count, created_at
+FROM toscametadata
+WHERE template_id='$templateIdEscaped'
+ORDER BY created_at DESC
+LIMIT $Limit;
+"@
+
+    Write-Host "Searching for template_id: $SearchValue" -ForegroundColor Gray
+    return Invoke-Query -BaseUrl $BaseUrl -Sql $sql
+}
+
+function Query-ByType {
+    param([string]$BaseUrl)
+
+    if (-not $ToscaType) {
+        Write-Error "ToscaType parameter is required for ByType query"
+        return
+    }
+
+    $sql = @"
+SELECT id, template_id, filename, filesize_bytes, content_sha256, ipfs_path,
+       uploader, source_pod, source_ip, description, node_templates_count, created_at
+FROM toscametadata
+WHERE filename LIKE '%$ToscaType%' OR description LIKE '%$ToscaType%'
+ORDER BY created_at DESC
+LIMIT $Limit;
+"@
+
+    Write-Host "Searching for TOSCA type: $ToscaType" -ForegroundColor Gray
+    return Invoke-Query -BaseUrl $BaseUrl -Sql $sql
+}
+
+function Query-ByUploader {
+    param([string]$BaseUrl)
+
+    if (-not $SearchValue) {
+        Write-Error "SearchValue parameter is required for ByUploader query"
+        return
+    }
+
+    $uploaderEscaped = Invoke-SqlEscape -Text $SearchValue
+
+    $sql = @"
+SELECT id, template_id, filename, filesize_bytes, content_sha256, ipfs_path,
+       uploader, source_pod, source_ip, description, node_templates_count, created_at
+FROM toscametadata
+WHERE uploader='$uploaderEscaped'
+ORDER BY created_at DESC
+LIMIT $Limit;
+"@
+
+    Write-Host "Searching for uploader: $SearchValue" -ForegroundColor Gray
+    return Invoke-Query -BaseUrl $BaseUrl -Sql $sql
+}
+
+function Query-ByDateRange {
+    param([string]$BaseUrl)
+
+    if (-not $StartDate -or -not $EndDate) {
+        Write-Error "StartDate and EndDate parameters are required for ByDateRange query"
+        return
+    }
+
+    $sql = @"
+SELECT id, template_id, filename, filesize_bytes, content_sha256, ipfs_path,
+       uploader, source_pod, source_ip, description, node_templates_count, created_at
+FROM toscametadata
+WHERE DATE(created_at) BETWEEN '$StartDate' AND '$EndDate'
+ORDER BY created_at DESC
+LIMIT $Limit;
+"@
+
+    Write-Host "Searching for date range: $StartDate to $EndDate" -ForegroundColor Gray
+    return Invoke-Query -BaseUrl $BaseUrl -Sql $sql
+}
+
+function Query-Recent {
+    param([string]$BaseUrl)
+
+    $sql = @"
+SELECT id, template_id, filename, filesize_bytes, content_sha256, ipfs_path,
+       uploader, source_pod, source_ip, description, node_templates_count, created_at
+FROM toscametadata
+ORDER BY created_at DESC
+LIMIT $Limit;
+"@
+
+    Write-Host "Fetching $Limit most recent TOSCA files" -ForegroundColor Gray
+    return Invoke-Query -BaseUrl $BaseUrl -Sql $sql
+}
+
+function Query-Statistics {
+    param([string]$BaseUrl)
+
+    $sql = @"
+SELECT
+    COUNT(*) as total_files,
+    SUM(filesize_bytes) as total_size_bytes,
+    AVG(filesize_bytes) as avg_size_bytes,
+    MIN(created_at) as first_upload,
+    MAX(created_at) as last_upload,
+    COUNT(DISTINCT uploader) as unique_uploaders,
+    COUNT(DISTINCT source_pod) as unique_pods
+FROM toscametadata;
+"@
+
+    Write-Host "Calculating storage statistics" -ForegroundColor Gray
+    return Invoke-Query -BaseUrl $BaseUrl -Sql $sql
+}
+
+function Query-All {
+    param([string]$BaseUrl)
+
+    $sql = @"
+SELECT id, template_id, filename, filesize_bytes, content_sha256,
+       uploader, source_pod, created_at
+FROM toscametadata
+ORDER BY created_at DESC
+LIMIT $Limit;
+"@
+
+    Write-Host "Fetching all TOSCA files (limit: $Limit)" -ForegroundColor Gray
+    return Invoke-Query -BaseUrl $BaseUrl -Sql $sql
+}
+
+# ============================================================
+# Result Processing
+# ============================================================
+
+function Format-Results {
+    param([object]$Response)
+
+    if ($Response -eq $null) {
+        Write-Warning "No results returned"
+        return
+    }
+
+    Write-Host "`nQuery Results:" -ForegroundColor Green
+
+    # Pretty print JSON
+    $Response | ConvertTo-Json -Depth 10 | Write-Host
+
+    # Extract and display data if available
+    if ($Response.data -and $Response.data.Count -gt 0) {
+        Write-Host "`n--- Data Summary ---" -ForegroundColor Cyan
+        Write-Host "Records returned: $($Response.data.Count)" -ForegroundColor Gray
+
+        if ($QueryType -eq "Statistics") {
+            # Special formatting for statistics
+            $stats = $Response.data[0]
+            Write-Host "`nStorage Statistics:" -ForegroundColor Yellow
+            Write-Host "  Total Files:       $($stats.total_files)" -ForegroundColor Gray
+            Write-Host "  Total Size:        $([math]::Round($stats.total_size_bytes / 1MB, 2)) MB" -ForegroundColor Gray
+            Write-Host "  Average Size:      $([math]::Round($stats.avg_size_bytes / 1KB, 2)) KB" -ForegroundColor Gray
+            Write-Host "  First Upload:      $($stats.first_upload)" -ForegroundColor Gray
+            Write-Host "  Last Upload:       $($stats.last_upload)" -ForegroundColor Gray
+            Write-Host "  Unique Uploaders:  $($stats.unique_uploaders)" -ForegroundColor Gray
+            Write-Host "  Unique Pods:       $($stats.unique_pods)" -ForegroundColor Gray
+        } else {
+            # Display file records
+            Write-Host "`nFiles Found:" -ForegroundColor Yellow
+            foreach ($record in $Response.data) {
+                Write-Host "`n  File: $($record.filename)" -ForegroundColor White
+                Write-Host "    ID:          $($record.id)" -ForegroundColor Gray
+                Write-Host "    Template ID: $($record.template_id)" -ForegroundColor Gray
+                Write-Host "    Size:        $([math]::Round($record.filesize_bytes / 1KB, 2)) KB" -ForegroundColor Gray
+                Write-Host "    Uploader:    $($record.uploader)" -ForegroundColor Gray
+                Write-Host "    Created:     $($record.created_at)" -ForegroundColor Gray
+
+                if ($record.ipfs_path) {
+                    Write-Host "    IPFS Path:   $($record.ipfs_path)" -ForegroundColor Gray
+                }
+
+                if ($record.content_sha256) {
+                    Write-Host "    SHA256:      $($record.content_sha256.Substring(0, 16))..." -ForegroundColor Gray
+                }
+            }
+        }
+    } else {
+        Write-Host "No data returned" -ForegroundColor Yellow
+    }
+}
+
+# ============================================================
+# Main Execution
+# ============================================================
+
+function Main {
+    Write-Host @"
 ╔════════════════════════════════════════════════════════════════╗
-║   Swarmchestrate - Batch TOSCA Upload Script                  ║
-║   Upload All Sample Files to Knowledge Base                   ║
+║    Swarmchestrate Knowledge Base - TOSCA Query Tool           ║
+║               Advanced Query and Retrieval                     ║
 ╚════════════════════════════════════════════════════════════════╝
 "@ -ForegroundColor Cyan
 
-Write-Host "`nConfiguration:" -ForegroundColor Yellow
-Write-Host "  Mode:            $Mode" -ForegroundColor Gray
-Write-Host "  Namespace:       $Namespace" -ForegroundColor Gray
-Write-Host "  TOSCA Directory: $ToscaDirectory" -ForegroundColor Gray
-Write-Host "  Delay:           $DelayBetweenUploads seconds" -ForegroundColor Gray
+    Write-Host "`nQuery Configuration:" -ForegroundColor Yellow
+    Write-Host "  Query Type:      $QueryType" -ForegroundColor Gray
+    Write-Host "  Namespace:       $Namespace" -ForegroundColor Gray
+    Write-Host "  Mode:            $Mode" -ForegroundColor Gray
+    Write-Host "  Limit:           $Limit" -ForegroundColor Gray
 
-# Check if upload script exists
-$uploadScript = Join-Path $PSScriptRoot "TOSCA-Upload-Query.ps1"
-if (-not (Test-Path $uploadScript)) {
-    Write-Error "TOSCA-Upload-Query.ps1 not found in the same directory"
+    if ($SearchValue) {
+        Write-Host "  Search Value:    $SearchValue" -ForegroundColor Gray
+    }
+    if ($ToscaType) {
+        Write-Host "  TOSCA Type:      $ToscaType" -ForegroundColor Gray
+    }
+    if ($StartDate) {
+        Write-Host "  Start Date:      $StartDate" -ForegroundColor Gray
+    }
+    if ($EndDate) {
+        Write-Host "  End Date:        $EndDate" -ForegroundColor Gray
+    }
+
+    # Get targets
+    Get-Targets
+
+    # Execute query on first available target
+    $targetUrl = $script:Targets[0]
+
+    Write-Section "Executing Query on: $targetUrl"
+
+    $response = $null
+
+    switch ($QueryType) {
+        "ByFilename"    { $response = Query-ByFilename -BaseUrl $targetUrl }
+        "ByTemplateId"  { $response = Query-ByTemplateId -BaseUrl $targetUrl }
+        "ByType"        { $response = Query-ByType -BaseUrl $targetUrl }
+        "ByUploader"    { $response = Query-ByUploader -BaseUrl $targetUrl }
+        "ByDateRange"   { $response = Query-ByDateRange -BaseUrl $targetUrl }
+        "Recent"        { $response = Query-Recent -BaseUrl $targetUrl }
+        "Statistics"    { $response = Query-Statistics -BaseUrl $targetUrl }
+        "All"           { $response = Query-All -BaseUrl $targetUrl }
+    }
+
+    # Format and display results
+    Format-Results -Response $response
+
+    # Export results
+    if ($response -ne $null) {
+        $exportFile = "tosca-query-results-$(Get-Date -Format 'yyyyMMdd-HHmmss').json"
+        $response | ConvertTo-Json -Depth 10 | Out-File $exportFile -Encoding UTF8
+        Write-Host "`n✓ Results exported to: $exportFile" -ForegroundColor Green
+    }
+
+    Write-Host "`n✓ Query completed" -ForegroundColor Green
+}
+
+# Execute
+try {
+    Main
+} catch {
+    Write-Error "Query execution failed: $($_.Exception.Message)"
+    Write-Host $_.ScriptStackTrace -ForegroundColor Red
     exit 1
 }
-
-Write-Host "`n✓ Upload script found: $uploadScript" -ForegroundColor Green
-
-# Initialize results tracking
-$results = @()
-$startTime = Get-Date
-
-# Process each TOSCA file
-Write-Host "`n╔════════════════════════════════════════════════════════════════╗" -ForegroundColor Magenta
-Write-Host "║ Starting Batch Upload                                         ║" -ForegroundColor Magenta
-Write-Host "╚════════════════════════════════════════════════════════════════╝" -ForegroundColor Magenta
-
-$fileNumber = 1
-foreach ($toscaConfig in $toscaFiles) {
-    $filePath = Join-Path $ToscaDirectory $toscaConfig.File
-
-    Write-Host "`n[$fileNumber/$($toscaFiles.Count)] Processing: $($toscaConfig.File)" -ForegroundColor Yellow
-    Write-Host "    Type:        $($toscaConfig.Type)" -ForegroundColor Gray
-    Write-Host "    Description: $($toscaConfig.Description)" -ForegroundColor Gray
-    Write-Host "    Datastore:   $($toscaConfig.Datastore)" -ForegroundColor Gray
-
-    if (-not (Test-Path $filePath)) {
-        Write-Warning "File not found: $filePath"
-        $results += @{
-            File = $toscaConfig.File
-            Type = $toscaConfig.Type
-            Status = "Failed"
-            Error = "File not found"
-            TemplateId = $null
-        }
-        $fileNumber++
-        continue
-    }
-
-    # Execute upload
-    Write-Host "    Uploading..." -ForegroundColor Cyan
-
-    try {
-        # Call the main upload script
-        $output = & $uploadScript `
-            -ToscaFile $filePath `
-            -Mode $Mode `
-            -Namespace $Namespace `
-            -ToscaType $toscaConfig.Type `
-            -ErrorAction Stop 2>&1
-
-        # Parse output to extract template ID (simplified - you may need to adjust)
-        $templateIdMatch = $output | Select-String -Pattern "Template ID:\s+(\S+)"
-        $templateId = if ($templateIdMatch) { $templateIdMatch.Matches[0].Groups[1].Value } else { "Unknown" }
-
-        Write-Host "    ✓ Upload completed" -ForegroundColor Green
-
-        $results += @{
-            File = $toscaConfig.File
-            Type = $toscaConfig.Type
-            Status = "Success"
-            Error = $null
-            TemplateId = $templateId
-        }
-
-    } catch {
-        Write-Warning "Upload failed: $($_.Exception.Message)"
-        $results += @{
-            File = $toscaConfig.File
-            Type = $toscaConfig.Type
-            Status = "Failed"
-            Error = $_.Exception.Message
-            TemplateId = $null
-        }
-    }
-
-    # Delay before next upload
-    if ($fileNumber -lt $toscaFiles.Count) {
-        Write-Host "    Waiting $DelayBetweenUploads seconds before next upload..." -ForegroundColor Gray
-        Start-Sleep -Seconds $DelayBetweenUploads
-    }
-
-    $fileNumber++
-}
-
-# Generate summary
-$endTime = Get-Date
-$duration = $endTime - $startTime
-
-Write-Host "`n╔════════════════════════════════════════════════════════════════╗" -ForegroundColor Green
-Write-Host "║ Batch Upload Summary                                          ║" -ForegroundColor Green
-Write-Host "╚════════════════════════════════════════════════════════════════╝" -ForegroundColor Green
-
-Write-Host "`nExecution Time: $($duration.TotalSeconds) seconds" -ForegroundColor Cyan
-
-$successCount = ($results | Where-Object { $_.Status -eq "Success" }).Count
-$failCount = ($results | Where-Object { $_.Status -eq "Failed" }).Count
-
-Write-Host "`nResults:" -ForegroundColor Yellow
-Write-Host "  Total Files:      $($toscaFiles.Count)" -ForegroundColor Gray
-Write-Host "  Successful:       $successCount" -ForegroundColor Green
-Write-Host "  Failed:           $failCount" -ForegroundColor $(if ($failCount -gt 0) { "Red" } else { "Gray" })
-
-Write-Host "`nDetailed Results:" -ForegroundColor Yellow
-Write-Host ("-" * 80) -ForegroundColor Gray
-
-foreach ($result in $results) {
-    $statusColor = if ($result.Status -eq "Success") { "Green" } else { "Red" }
-    $statusIcon = if ($result.Status -eq "Success") { "✓" } else { "✗" }
-
-    Write-Host "$statusIcon $($result.File)" -ForegroundColor $statusColor
-    Write-Host "    Type:        $($result.Type)" -ForegroundColor Gray
-    Write-Host "    Status:      $($result.Status)" -ForegroundColor $statusColor
-
-    if ($result.TemplateId) {
-        Write-Host "    Template ID: $($result.TemplateId)" -ForegroundColor Gray
-    }
-
-    if ($result.Error) {
-        Write-Host "    Error:       $($result.Error)" -ForegroundColor Red
-    }
-
-    Write-Host ""
-}
-
-# Export results to JSON
-$resultsFile = "batch-upload-results-$(Get-Date -Format 'yyyyMMdd-HHmmss').json"
-$results | ConvertTo-Json -Depth 5 | Out-File $resultsFile -Encoding UTF8
-Write-Host "Results exported to: $resultsFile" -ForegroundColor Cyan
-
-# Generate verification queries
-Write-Host "`n╔════════════════════════════════════════════════════════════════╗" -ForegroundColor Cyan
-Write-Host "║ Verification Queries                                          ║" -ForegroundColor Cyan
-Write-Host "╚════════════════════════════════════════════════════════════════╝" -ForegroundColor Cyan
-
-Write-Host "`nTo verify all uploaded files, run these SQL queries:" -ForegroundColor Yellow
-
-$sqlVerification = @"
-
--- Query 1: List all uploaded TOSCA files
-SELECT filename, template_id, filesize_bytes, created_at, uploader
-FROM toscametadata
-ORDER BY created_at DESC
-LIMIT 10;
-
--- Query 2: Count files by type
-SELECT
-    CASE
-        WHEN filename LIKE '%application_description%' THEN 'Application Description'
-        WHEN filename LIKE '%capacity_description%' THEN 'Capacity Description'
-        WHEN filename LIKE '%opentofu%' THEN 'OpenTofu Template'
-        WHEN filename LIKE '%deployment%' THEN 'Deployment Plan'
-        WHEN filename LIKE '%requirements%' THEN 'Application Requirements'
-        ELSE 'Other'
-    END as tosca_type,
-    COUNT(*) as file_count,
-    SUM(filesize_bytes) as total_size_bytes
-FROM toscametadata
-GROUP BY tosca_type;
-
--- Query 3: Get files uploaded in this batch
-SELECT filename, template_id, created_at
-FROM toscametadata
-WHERE datetime(created_at) > datetime('now', '-1 hour')
-ORDER BY created_at DESC;
-
-"@
-
-Write-Host $sqlVerification -ForegroundColor Gray
-
-Write-Host "`n✓ Batch upload completed!" -ForegroundColor Green
