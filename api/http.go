@@ -16,6 +16,7 @@ import (
 	"optimusdb/app"
 	"optimusdb/config"
 	"optimusdb/contextualmetadata"
+	"optimusdb/credentials"
 	"optimusdb/tosca"
 	"os"
 	"regexp"
@@ -775,6 +776,9 @@ func ServeHTTP(optimusdb *app.KnowledgeBaseDB, theLog *app.LoggerSQLite, reqChan
 			w.Header().Set("Content-Type", "application/json")
 			json.NewEncoder(w).Encode(map[string]interface{}{"records": rows})
 		})))
+
+	// DID Endpoints
+	credentials.SetupCredentialsEndpoints(server, mw, *config.FlagContext, optimusdb, theLog)
 
 	/////////
 	// register benchmarks handler which is specific for this API because it's

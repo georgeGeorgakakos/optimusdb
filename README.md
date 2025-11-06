@@ -45,6 +45,7 @@ Key goals:
 - [Election versus Discovery Peer Mechanism](docs/OptimusDB_DiscoveryVsElection.md)
 - [Metadata Management](docs/OptimusDB_Metadata_guide.md)
 - [EMS Integration](docs/OptimusDB_EMS.md)
+- [DID Integration](docs/OptimusDB_Credential_guide.md)
 - [Quick Start](#quick-start)
 - [Prerequisites](#prerequisites)
 - [Run from Source](#run-from-source)

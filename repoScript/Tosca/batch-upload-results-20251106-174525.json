@@ -1,0 +1,37 @@
+﻿[
+    {
+        "Status":  "Success",
+        "Error":  null,
+        "File":  "sample_1_application_description.yaml",
+        "Type":  "ApplicationDescription",
+        "TemplateId":  "Unknown"
+    },
+    {
+        "Status":  "Success",
+        "Error":  null,
+        "File":  "sample_2_capacity_description.yaml",
+        "Type":  "CapacityDescription",
+        "TemplateId":  "Unknown"
+    },
+    {
+        "Status":  "Success",
+        "Error":  null,
+        "File":  "sample_3_opentofu_tosca_template.yaml",
+        "Type":  "OpenTofuTemplate",
+        "TemplateId":  "Unknown"
+    },
+    {
+        "Status":  "Success",
+        "Error":  null,
+        "File":  "sample_4_deployment_release_plan.yaml",
+        "Type":  "DeploymentPlan",
+        "TemplateId":  "Unknown"
+    },
+    {
+        "Status":  "Success",
+        "Error":  null,
+        "File":  "sample_5_application_requirements.yaml",
+        "Type":  "ApplicationRequirements",
+        "TemplateId":  "Unknown"
+    }
+]
