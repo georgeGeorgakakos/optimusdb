@@ -4,7 +4,7 @@
 
 The Verifiable Credentials API implements the W3C Verifiable Credentials standard with decentralized storage using IPFS and CRUD Data stores. Store, query, verify, and manage digital credentials in a distributed, tamper-proof system.
 
-**Base URL**: `http://localhost:18001/optimusdb/credentials`
+**Base URL**: `http://localhost:18001/swarmkb/credentials`
 
 **Storage Architecture**:
 - 🗃️ **IPFS**: Immutable content-addressed storage
@@ -19,7 +19,7 @@ The Verifiable Credentials API implements the W3C Verifiable Credentials standar
 ### 1. Store Your First Credential
 
 ```bash
-curl -X POST http://localhost:18001/optimusdb/credentials \
+curl -X POST http://localhost:18001/swarmkb/credentials \
 -H "Content-Type: application/json" \
 -d '{
 "@context": ["https://www.w3.org/2018/credentials/v1"],
@@ -48,13 +48,13 @@ curl -X POST http://localhost:18001/optimusdb/credentials \
 ### 2. Retrieve the Credential
 
 ```bash
-curl http://localhost:18001/optimusdb/credentials/get/urn:uuid:vc-abc123def456
+curl http://localhost:18001/swarmkb/credentials/get/urn:uuid:vc-abc123def456
 ```
 
 ### 3. List All Credentials
 
 ```bash
-curl http://localhost:18001/optimusdb/credentials
+curl http://localhost:18001/swarmkb/credentials
 ```
 
 ---
@@ -80,7 +80,7 @@ curl http://localhost:18001/optimusdb/credentials
 
 Store a new verifiable credential.
 
-**`POST /optimusdb/credentials`**
+**`POST /swarmkb/credentials`**
 
 ### Request Body
 
@@ -110,7 +110,7 @@ Store a new verifiable credential.
 
 **Basic Credential**:
 ```bash
-curl -X POST http://localhost:18001/optimusdb/credentials \
+curl -X POST http://localhost:18001/swarmkb/credentials \
 -H "Content-Type: application/json" \
 -d '{
 "@context": ["https://www.w3.org/2018/credentials/v1"],
@@ -127,7 +127,7 @@ curl -X POST http://localhost:18001/optimusdb/credentials \
 
 **University Degree**:
 ```bash
-curl -X POST http://localhost:18001/optimusdb/credentials \
+curl -X POST http://localhost:18001/swarmkb/credentials \
 -H "Content-Type: application/json" \
 -d '{
 "@context": [
@@ -153,7 +153,7 @@ curl -X POST http://localhost:18001/optimusdb/credentials \
 
 Get paginated list of all credentials.
 
-**`GET /optimusdb/credentials?limit={limit}&offset={offset}`**
+**`GET /swarmkb/credentials?limit={limit}&offset={offset}`**
 
 ### Query Parameters
 
@@ -164,10 +164,10 @@ Get paginated list of all credentials.
 
 ```bash
 # First page (0-49)
-curl "http://localhost:18001/optimusdb/credentials?limit=50&offset=0"
+curl "http://localhost:18001/swarmkb/credentials?limit=50&offset=0"
 
 # Second page (50-99)
-curl "http://localhost:18001/optimusdb/credentials?limit=50&offset=50"
+curl "http://localhost:18001/swarmkb/credentials?limit=50&offset=50"
 ```
 
 ### Response
@@ -199,16 +199,16 @@ curl "http://localhost:18001/optimusdb/credentials?limit=50&offset=50"
 
 Retrieve full credential details.
 
-**`GET /optimusdb/credentials/get/{credentialId}`**
+**`GET /swarmkb/credentials/get/{credentialId}`**
 
 ### Example
 
 ```bash
 # Simple ID
-curl http://localhost:18001/optimusdb/credentials/get/test-001
+curl http://localhost:18001/swarmkb/credentials/get/test-001
 
 # URL-encoded ID
-curl http://localhost:18001/optimusdb/credentials/get/urn:uuid:vc-abc123
+curl http://localhost:18001/swarmkb/credentials/get/urn:uuid:vc-abc123
 ```
 
 ### Response
@@ -243,7 +243,7 @@ curl http://localhost:18001/optimusdb/credentials/get/urn:uuid:vc-abc123
 
 Search with multiple filters.
 
-**`POST /optimusdb/credentials/query`**
+**`POST /swarmkb/credentials/query`**
 
 ### Request Body
 
@@ -266,14 +266,14 @@ Search with multiple filters.
 
 **Active credentials only**:
 ```bash
-curl -X POST http://localhost:18001/optimusdb/credentials/query \
+curl -X POST http://localhost:18001/swarmkb/credentials/query \
 -H "Content-Type: application/json" \
 -d '{"status": "active", "limit": 10}'
 ```
 
 **By issuer and type**:
 ```bash
-curl -X POST http://localhost:18001/optimusdb/credentials/query \
+curl -X POST http://localhost:18001/swarmkb/credentials/query \
 -H "Content-Type: application/json" \
 -d '{
 "issuerId": "did:example:university",
@@ -284,7 +284,7 @@ curl -X POST http://localhost:18001/optimusdb/credentials/query \
 
 **Date range**:
 ```bash
-curl -X POST http://localhost:18001/optimusdb/credentials/query \
+curl -X POST http://localhost:18001/swarmkb/credentials/query \
 -H "Content-Type: application/json" \
 -d '{
 "issuedAfter": "2024-01-01T00:00:00Z",
@@ -299,15 +299,15 @@ curl -X POST http://localhost:18001/optimusdb/credentials/query \
 
 Get all credentials from a specific issuer.
 
-**`GET /optimusdb/credentials/issuer/{issuerId}`**
+**`GET /swarmkb/credentials/issuer/{issuerId}`**
 
 ### Example
 
 ```bash
-curl http://localhost:18001/optimusdb/credentials/issuer/did:example:university
+curl http://localhost:18001/swarmkb/credentials/issuer/did:example:university
 
 # URL-encoded issuer
-curl http://localhost:18001/optimusdb/credentials/issuer/https%3A%2F%2Funiversity.edu
+curl http://localhost:18001/swarmkb/credentials/issuer/https%3A%2F%2Funiversity.edu
 ```
 
 ### Response
@@ -327,12 +327,12 @@ curl http://localhost:18001/optimusdb/credentials/issuer/https%3A%2F%2Funiversit
 
 Get all credentials for a specific subject (holder).
 
-**`GET /optimusdb/credentials/subject/{subjectId}`**
+**`GET /swarmkb/credentials/subject/{subjectId}`**
 
 ### Example
 
 ```bash
-curl http://localhost:18001/optimusdb/credentials/subject/did:example:student456
+curl http://localhost:18001/swarmkb/credentials/subject/did:example:student456
 ```
 
 ### Response
@@ -352,7 +352,7 @@ curl http://localhost:18001/optimusdb/credentials/subject/did:example:student456
 
 Mark a credential as revoked.
 
-**`POST /optimusdb/credentials/revoke`**
+**`POST /swarmkb/credentials/revoke`**
 
 ### Request Body
 
@@ -366,7 +366,7 @@ Mark a credential as revoked.
 ### Example
 
 ```bash
-curl -X POST http://localhost:18001/optimusdb/credentials/revoke \
+curl -X POST http://localhost:18001/swarmkb/credentials/revoke \
 -H "Content-Type: application/json" \
 -d '{
 "credentialId": "urn:uuid:vc-abc123",
@@ -396,7 +396,7 @@ curl -X POST http://localhost:18001/optimusdb/credentials/revoke \
 
 Verify authenticity and validity.
 
-**`POST /optimusdb/credentials/verify`**
+**`POST /swarmkb/credentials/verify`**
 
 ### Request Body
 
@@ -419,7 +419,7 @@ Send the complete credential to verify:
 ### Example
 
 ```bash
-curl -X POST http://localhost:18001/optimusdb/credentials/verify \
+curl -X POST http://localhost:18001/swarmkb/credentials/verify \
 -H "Content-Type: application/json" \
 -d @credential.json
 ```
@@ -464,7 +464,7 @@ curl -X POST http://localhost:18001/optimusdb/credentials/verify \
 ```javascript
 const axios = require('axios');
 
-const BASE_URL = 'http://localhost:18001/optimusdb/credentials';
+const BASE_URL = 'http://localhost:18001/swarmkb/credentials';
 
 // Store credential
 async function storeCredential(vc) {
@@ -516,7 +516,7 @@ console.log('Active credentials:', active.length);
 import requests
 from datetime import datetime
 
-BASE_URL = 'http://localhost:18001/optimusdb/credentials'
+BASE_URL = 'http://localhost:18001/swarmkb/credentials'
 
 def store_credential(vc):
 response = requests.post(BASE_URL, json=vc)
@@ -558,7 +558,7 @@ print(f"Retrieved: {credential['id']}")
 #!/bin/bash
 
 # 1. Store credential
-CRED_ID=$(curl -s -X POST http://localhost:18001/optimusdb/credentials \
+CRED_ID=$(curl -s -X POST http://localhost:18001/swarmkb/credentials \
 -H "Content-Type: application/json" \
 -d '{
 "@context": ["https://www.w3.org/2018/credentials/v1"],
@@ -575,15 +575,15 @@ CRED_ID=$(curl -s -X POST http://localhost:18001/optimusdb/credentials \
 echo "✅ Stored: $CRED_ID"
 
 # 2. Retrieve
-curl -s http://localhost:18001/optimusdb/credentials/get/$CRED_ID | jq
+curl -s http://localhost:18001/swarmkb/credentials/get/$CRED_ID | jq
 
 # 3. Query
-curl -s -X POST http://localhost:18001/optimusdb/credentials/query \
+curl -s -X POST http://localhost:18001/swarmkb/credentials/query \
 -H "Content-Type: application/json" \
 -d '{"status": "active", "limit": 5}' | jq
 
 # 4. Revoke
-curl -s -X POST http://localhost:18001/optimusdb/credentials/revoke \
+curl -s -X POST http://localhost:18001/swarmkb/credentials/revoke \
 -H "Content-Type: application/json" \
 -d "{\"credentialId\": \"$CRED_ID\", \"reason\": \"Test\"}" | jq
 ```
@@ -624,7 +624,7 @@ curl -s -X POST http://localhost:18001/optimusdb/credentials/revoke \
 ### 4. Always Verify Before Using
 
 ```bash
-curl -X POST http://localhost:18001/optimusdb/credentials/verify \
+curl -X POST http://localhost:18001/swarmkb/credentials/verify \
 -H "Content-Type: application/json" \
 -d @credential.json
 ```
@@ -632,7 +632,7 @@ curl -X POST http://localhost:18001/optimusdb/credentials/verify \
 ### 5. Check Revocation Status
 
 ```bash
-CRED=$(curl -s http://localhost:18001/optimusdb/credentials/get/$ID)
+CRED=$(curl -s http://localhost:18001/swarmkb/credentials/get/$ID)
 STATUS=$(echo $CRED | jq -r '.metadata.status')
 [ "$STATUS" = "active" ] || echo "⚠️ Credential is $STATUS"
 ```
@@ -770,16 +770,16 @@ tail -f optimusdb.log
 **Cannot retrieve?**
 ```bash
 # List all credentials first
-curl http://localhost:18001/optimusdb/credentials | jq
+curl http://localhost:18001/swarmkb/credentials | jq
 
 # Verify credential ID is correct
-curl http://localhost:18001/optimusdb/credentials/get/YOUR_ID | jq
+curl http://localhost:18001/swarmkb/credentials/get/YOUR_ID | jq
 ```
 
 **Query returns empty?**
 ```bash
 # Start with broad query
-curl -X POST http://localhost:18001/optimusdb/credentials/query \
+curl -X POST http://localhost:18001/swarmkb/credentials/query \
 -H "Content-Type: application/json" \
 -d '{"limit": 100}' | jq
 ```

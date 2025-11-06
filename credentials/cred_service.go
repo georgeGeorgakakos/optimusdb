@@ -352,7 +352,7 @@ func (s *Service) storeInDocumentStore(ctx context.Context, vc *VerifiableCreden
 	// Put document in store
 	_, err := s.credentialsStore.Put(ctx, doc)
 	if err != nil {
-		return "", fmt.Errorf("failed to store in OrbitDB: %v", err)
+		return "", fmt.Errorf("failed to store in Data Store: %v", err)
 	}
 
 	// Return the document ID as the hash reference
