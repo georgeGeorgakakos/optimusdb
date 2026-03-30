@@ -526,22 +526,26 @@ func main() {
 		llamaURL = "http://localhost:8080"
 	}
 
-	semanticIdx, semanticErr := semantic.New(
-		rdbms.DB,              // *sql.DB — existing KnowledgeBaseSQLite database
-		llamaURL,              // base URL of llama-server, e.g. "http://localhost:8080"
-		knowledgeBaseDB.Orbit, // *iface.OrbitDB — for IPFS Unixfs().Add()
-		hostMain,              // host.Host
-		ps,                    // *pubsub.PubSub — IPFS node's pubsub (already used for election)
-	)
-	if semanticErr != nil {
-		logger.Warn("[SEMANTIC] Index unavailable: %v", semanticErr)
-		logger.Warn("[SEMANTIC]   Check llama-server has --embedding flag and sqlite-vec is installed")
-	} else {
-		// Wire the fetcher so search results include full document content
-		semanticIdx.WithFetcher(&knowledgeBaseDB)
-		logger.Info("[SEMANTIC] Semantic search index initialized (llama: %s)", llamaURL)
-		knowledgeBaseDB.SemanticIdx = semanticIdx
-	}
+	// AFTER — degrades gracefully, OptimusDB starts regardless
+	func() {
+		defer func() {
+			if r := recover(); r != nil {
+				logger.Warn("[SEMANTIC] Index startup panic (sqlite-vec not available?): %v", r)
+				logger.Warn("[SEMANTIC] OptimusDB starting without semantic search")
+			}
+		}()
+		semanticIdx, semanticErr := semantic.New(
+			rdbms.DB, llamaURL, knowledgeBaseDB.Orbit, hostMain, ps,
+		)
+		if semanticErr != nil {
+			logger.Warn("[SEMANTIC] Index unavailable: %v", semanticErr)
+			logger.Warn("[SEMANTIC] OptimusDB starting without semantic search")
+		} else {
+			semanticIdx.WithFetcher(&knowledgeBaseDB)
+			logger.Info("[SEMANTIC] Semantic search initialized (llama: %s)", llamaURL)
+			knowledgeBaseDB.SemanticIdx = semanticIdx
+		}
+	}()
 	// ═══════════════════════════════════════════════════════════════
 
 	// ===============================
