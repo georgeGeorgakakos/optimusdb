@@ -34,8 +34,9 @@ RUN wget https://github.com/ggerganov/llama.cpp/releases/download/b3790/llama-b3
     chmod +x /tmp/llama-server && \
     rm llama-b3790-bin-ubuntu-x64.zip
 
-# Download sqlite-vec loadable extension (.so) for semantic search
-# Loaded at runtime via load_extension() — no CGo bindings needed
+# Download sqlite-vec loadable extension (.so) for semantic search.
+# Loaded at runtime via SELECT load_extension() — no CGo bindings needed.
+# Requires _allow_load_extension=1 in the DSN (set in app/app.go InitSQLite).
 RUN mkdir -p /usr/lib/sqlite-vec && \
     wget -q https://github.com/asg017/sqlite-vec/releases/download/v0.1.6/sqlite-vec-0.1.6-loadable-linux-x86_64.tar.gz && \
     tar xzf sqlite-vec-0.1.6-loadable-linux-x86_64.tar.gz && \
@@ -65,7 +66,9 @@ RUN go mod tidy || true
 # Build OptimusDB with HTTP client support
 RUN CGO_ENABLED=1 GOOS=linux GOARCH=amd64 go build -o optimusdb main.go
 
+# ==============================================================================
 # Stage 2: Runtime
+# ==============================================================================
 FROM ubuntu:22.04
 
 WORKDIR /root/
@@ -92,27 +95,45 @@ RUN apt update && apt install -y \
     libstdc++6 \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy llama server and optimusdb binaries
+# Copy binaries from builder stage
 COPY --from=builder /tmp/llama-server /usr/local/bin/llama-server
 COPY --from=builder /optimusdbKB/optimusdb /usr/local/bin/optimusdb
-# Copy sqlite-vec loadable extension
+
+# Copy sqlite-vec loadable extension from builder stage
 COPY --from=builder /usr/lib/sqlite-vec/vec0.so /usr/lib/sqlite-vec/vec0.so
 
 # Create necessary directories
 RUN mkdir -p /data/orbitdb /data/ipfs /config /models /var/log/supervisor /var/run
 
-# Copy your existing TinyLlama model from host
+# Copy TinyLlama model from local project (models/ folder).
+# The deploy script (deploy-optimusdb-scheduled.sh) copies the valid model
+# from /opt/iccs/libs/ into running pods after kubectl apply, so a 0-byte
+# placeholder here is acceptable — supervisord will restart tinyllama once
+# the real file is in place.
 COPY models/tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf /models/tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf
 
 # Set executable permissions
 RUN chmod +x /usr/local/bin/optimusdb /usr/local/bin/llama-server
 
-# Create supervisor configuration file
+# Create supervisor configuration file.
+# Includes [unix_http_server] and [supervisorctl] so that
+# 'supervisorctl restart tinyllama' works inside the container
+# (required by the deploy script and manual recovery procedures).
 RUN printf '[supervisord]\n\
 nodaemon=true\n\
 logfile=/var/log/supervisor/supervisord.log\n\
 pidfile=/var/run/supervisord.pid\n\
 childlogdir=/var/log/supervisor\n\
+\n\
+[unix_http_server]\n\
+file=/var/run/supervisor.sock\n\
+chmod=0700\n\
+\n\
+[supervisorctl]\n\
+serverurl=unix:///var/run/supervisor.sock\n\
+\n\
+[rpcinterface:supervisor]\n\
+supervisor.rpcinterface_factory=supervisor.rpcinterface:make_main_rpcinterface\n\
 \n\
 [program:tinyllama]\n\
 command=/usr/local/bin/llama-server -m /models/tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf -c 2048 --host 127.0.0.1 --port 8080 --n-gpu-layers 0 --embedding\n\
