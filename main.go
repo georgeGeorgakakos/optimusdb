@@ -11,6 +11,7 @@ import (
 	"github.com/lukesampson/figlet/figletlib"
 	_ "github.com/mattn/go-sqlite3"
 	"log"
+	"net/http"
 	"optimusdb/api"
 	"optimusdb/app"
 	"optimusdb/config"
@@ -520,32 +521,81 @@ func main() {
 		llamaURL = "http://localhost:8080"
 	}
 
-	// Wrapped in a recover() closure so that if sqlite-vec or llama-server
-	// embedding is unavailable, OptimusDB degrades gracefully and still starts.
-	func() {
-		defer func() {
-			if r := recover(); r != nil {
-				logger.Warn("[SEMANTIC] Index startup panic (sqlite-vec not available?): %v", r)
-				logger.Warn("[SEMANTIC] OptimusDB starting without semantic search")
+	// Initialise the semantic index in a background goroutine — same pattern
+	// as StartEMSSubscriber: non-blocking, retries until llama-server is ready,
+	// then sets SemanticIdx on KnowledgeBaseDB so the HTTP routes activate.
+	//
+	// This avoids the race condition where optimusdb starts before tinyllama
+	// has finished loading the model (typically 8–60s after supervisord spawns
+	// both processes simultaneously). The main startup sequence continues
+	// unblocked — election, GossipSub mesh, and HTTP server all come up
+	// normally while semantic search initialises in parallel.
+	go func(url string) {
+		retryDelay := 5 * time.Second
+
+		for {
+			// Check if the node is shutting down before each attempt
+			select {
+			case <-termCtx.Done():
+				logger.Info("[SEMANTIC] Shutdown — background init cancelled")
+				return
+			default:
 			}
-		}()
-		semanticIdx, semanticErr := semantic.New(
-			rdbms.DB,              // *sql.DB — existing KnowledgeBaseSQLite database
-			llamaURL,              // base URL of llama-server, e.g. "http://localhost:8080"
-			knowledgeBaseDB.Orbit, // *iface.OrbitDB — for IPFS Unixfs().Add()
-			hostMain,              // host.Host
-			ps,                    // *pubsub.PubSub — IPFS node's pubsub (already used for election)
-		)
-		if semanticErr != nil {
-			logger.Warn("[SEMANTIC] Index unavailable: %v", semanticErr)
-			logger.Warn("[SEMANTIC] OptimusDB starting without semantic search")
-		} else {
-			// Wire the fetcher so search results include full document content
-			semanticIdx.WithFetcher(&knowledgeBaseDB)
-			logger.Info("[SEMANTIC] Semantic search index initialized (llama: %s)", llamaURL)
-			knowledgeBaseDB.SemanticIdx = semanticIdx
+
+			// Poll llama-server /health — same check EMS uses for broker readiness
+			resp, err := http.Get(url + "/health")
+			if err != nil || resp.StatusCode != 200 {
+				if resp != nil {
+					resp.Body.Close()
+				}
+				logger.Info("[SEMANTIC] llama-server not ready yet, retrying in %s...", retryDelay)
+				select {
+				case <-termCtx.Done():
+					return
+				case <-time.After(retryDelay):
+				}
+				continue
+			}
+			resp.Body.Close()
+			logger.Info("[SEMANTIC] llama-server is ready — initialising semantic index...")
+
+			// llama-server is up — attempt to create the index
+			func() {
+				defer func() {
+					if r := recover(); r != nil {
+						logger.Warn("[SEMANTIC] Index init panic: %v", r)
+					}
+				}()
+				semanticIdx, semanticErr := semantic.New(
+					rdbms.DB,              // *sql.DB — existing KnowledgeBaseSQLite database
+					url,                   // base URL of llama-server, e.g. "http://localhost:8080"
+					knowledgeBaseDB.Orbit, // *iface.OrbitDB — for IPFS Unixfs().Add()
+					hostMain,              // host.Host
+					ps,                    // *pubsub.PubSub — IPFS node's pubsub (already used for election)
+				)
+				if semanticErr != nil {
+					logger.Warn("[SEMANTIC] Index unavailable: %v — will retry in %s", semanticErr, retryDelay)
+					return
+				}
+				// Wire the fetcher so search results include full document content
+				semanticIdx.WithFetcher(&knowledgeBaseDB)
+				knowledgeBaseDB.SemanticIdx = semanticIdx
+				logger.Info("[SEMANTIC] Semantic search index initialized (llama: %s)", url)
+			}()
+
+			// If SemanticIdx was set successfully, we are done
+			if knowledgeBaseDB.SemanticIdx != nil {
+				return
+			}
+
+			// semantic.New() failed (e.g. vec0 load error) — retry after delay
+			select {
+			case <-termCtx.Done():
+				return
+			case <-time.After(retryDelay):
+			}
 		}
-	}()
+	}(llamaURL)
 	// ═══════════════════════════════════════════════════════════════
 
 	// ===============================
