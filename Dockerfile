@@ -105,7 +105,7 @@ pidfile=/var/run/supervisord.pid\n\
 childlogdir=/var/log/supervisor\n\
 \n\
 [program:tinyllama]\n\
-command=/usr/local/bin/llama-server -m /models/tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf -c 2048 --host 127.0.0.1 --port 8080 --n-gpu-layers 0\n\
+command=/usr/local/bin/llama-server -m /models/tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf -c 2048 --host 127.0.0.1 --port 8080 --n-gpu-layers 0 --embedding\n\
 autostart=true\n\
 autorestart=true\n\
 stdout_logfile=/var/log/supervisor/tinyllama.log\n\

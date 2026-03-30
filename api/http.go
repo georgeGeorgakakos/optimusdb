@@ -1752,6 +1752,25 @@ func RegisterMetadataRoutes(router *mux.Router, kb *app.KnowledgeBaseDB) {
 	logger.Info("[CHAT] Chat endpoint registered at /api/v1/chat")
 	logger.Info("[CHAT] Chat health endpoint registered at /api/v1/chat/health")
 	logger.Info("[CHAT] TinyLlama URL: %s", tinyllamaURL)
+
+	// ═══════════════════════════════════════════════════════════════
+	// SEMANTIC SEARCH ENDPOINTS (NEW)
+	// ═══════════════════════════════════════════════════════════════
+	if kb.SemanticIdx != nil {
+		type semanticRouter interface {
+			SearchHandler(http.ResponseWriter, *http.Request)
+			IndexHandler(http.ResponseWriter, *http.Request)
+			BootstrapHandler(http.ResponseWriter, *http.Request)
+		}
+		if sidx, ok := kb.SemanticIdx.(semanticRouter); ok {
+			apiV1.HandleFunc("/semantic/search", sidx.SearchHandler).Methods("GET")
+			apiV1.HandleFunc("/semantic/index", sidx.IndexHandler).Methods("POST")
+			apiV1.HandleFunc("/semantic/bootstrap", sidx.BootstrapHandler).Methods("POST")
+			logger.Info("[SEMANTIC] Routes registered at /api/v1/semantic/{search,index,bootstrap}")
+		}
+	} else {
+		logger.Info("[SEMANTIC] Index not initialized, skipping semantic routes")
+	}
 }
 
 // createKBQueryFunc creates a query function that connects to OptimusDB's document stores

@@ -1293,6 +1293,23 @@ func crudPutDocStoreRev(optimusdb *KnowledgeBaseDB, logChan chan Log,
 			if (successCount)%10 == 0 || successCount == len(docsToInsert) {
 				logger.Info("[INFO] CRUDPUT: Progress %d/%d documents inserted", successCount, len(docsToInsert))
 			}
+
+			// ── Semantic index (fire-and-forget, never blocks the write) ──────────
+			if optimusdb.SemanticIdx != nil {
+				fields := docFieldsToStringMap(docMap)
+				go func(sn, id string, f map[string]string, sidx interface{}) {
+					type indexer interface {
+						IndexDocument(store, docID string, fields map[string]string) error
+					}
+					if idx, ok := sidx.(indexer); ok {
+						if err := idx.IndexDocument(sn, id, f); err != nil {
+							logger.Warn("[SEMANTIC] index failed %s/%s: %v", sn, id, err)
+						}
+					}
+				}(storeName, docID, fields, optimusdb.SemanticIdx)
+			}
+			// ─────────────────────────────────────────────────────────────────────
+
 		} else {
 			errorCount++
 			lastError = insertErr
@@ -4368,4 +4385,33 @@ func min(a, b int) int {
 		return a
 	}
 	return b
+}
+
+// docFieldsToStringMap converts an OrbitDB document map to a flat string map
+// suitable for building an embedding text. Called from the semantic index hook
+// inside crudPutDocStoreRev after a successful OrbitDB Put.
+func docFieldsToStringMap(doc map[string]interface{}) map[string]string {
+	out := make(map[string]string, len(doc))
+	for k, v := range doc {
+		// Skip internal OrbitDB fields — not useful for embedding
+		if k == "_id" || k == "_created_at" {
+			continue
+		}
+		switch t := v.(type) {
+		case string:
+			out[k] = t
+		case []interface{}:
+			// Flatten tag slices: ["solar", "wind"] → "solar wind"
+			parts := make([]string, 0, len(t))
+			for _, item := range t {
+				if s, ok := item.(string); ok {
+					parts = append(parts, s)
+				}
+			}
+			out[k] = strings.Join(parts, " ")
+		default:
+			out[k] = fmt.Sprintf("%v", v)
+		}
+	}
+	return out
 }

@@ -3,6 +3,7 @@ package app
 import (
 	orbitdb "berty.tech/go-orbit-db"
 	"berty.tech/go-orbit-db/iface"
+	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -86,6 +87,11 @@ type KnowledgeBaseDB struct {
 	MetadataService MetadataServicePort
 	MetadataCache   MetadataCachePort
 	Interceptor     *PersistenceInterceptor //Lineage support
+
+	// NEW: SemanticIdx holds *semantic.Index — stored as interface{} to avoid
+	// an import cycle between the app and semantic packages.
+	// Cast with: kb.SemanticIdx.(*semantic.Index)
+	SemanticIdx interface{}
 }
 
 // ============================================================================
@@ -107,6 +113,88 @@ func (kb *KnowledgeBaseDB) SetMetadataCache(cache interface{}) {
 // GetMetadataCache returns the metadata cache from the knowledge base
 func (kb *KnowledgeBaseDB) GetMetadataCache() interface{} {
 	return kb.MetadataCache
+}
+
+// ============================================================================
+// NEW: SEMANTIC SEARCH — DocFetcher implementation
+// ============================================================================
+// FetchDocument resolves a store name + doc _id to the full document map.
+// Implements the semantic.DocFetcher interface so semantic.Index.enrichResults()
+// can hydrate search results with OrbitDB content without creating an import cycle.
+// Uses the same DocumentStore.Get() pattern as isValid() in service.go.
+func (kb *KnowledgeBaseDB) FetchDocument(ctx context.Context, storeName, docID string) (map[string]interface{}, error) {
+	var store iface.DocumentStore
+
+	switch strings.ToLower(storeName) {
+	case "dsswres":
+		if kb.DsSWres == nil {
+			return nil, fmt.Errorf("DsSWres store not initialized")
+		}
+		store = *kb.DsSWres
+	case "dsswresaloc":
+		if kb.DsSWresaloc == nil {
+			return nil, fmt.Errorf("DsSWresaloc store not initialized")
+		}
+		store = *kb.DsSWresaloc
+	case "kbmetadata":
+		if kb.KBMetadata == nil {
+			return nil, fmt.Errorf("KBMetadata store not initialized")
+		}
+		store = *kb.KBMetadata
+	case "kbdata":
+		if kb.KBdata == nil {
+			return nil, fmt.Errorf("KBdata store not initialized")
+		}
+		store = *kb.KBdata
+	case "tosca_imported":
+		if kb.DsTOSCA_Imported == nil {
+			return nil, fmt.Errorf("DsTOSCA_Imported store not initialized")
+		}
+		store = *kb.DsTOSCA_Imported
+	case "tosca_adt":
+		if kb.DsTOSCA_ADT == nil {
+			return nil, fmt.Errorf("DsTOSCA_ADT store not initialized")
+		}
+		store = *kb.DsTOSCA_ADT
+	case "tosca_capacities":
+		if kb.DsTOSCA_Capacities == nil {
+			return nil, fmt.Errorf("DsTOSCA_Capacities store not initialized")
+		}
+		store = *kb.DsTOSCA_Capacities
+	case "tosca_deploymentplan":
+		if kb.DsTOSCA_DeploymentPlan == nil {
+			return nil, fmt.Errorf("DsTOSCA_DeploymentPlan store not initialized")
+		}
+		store = *kb.DsTOSCA_DeploymentPlan
+	case "tosca_eventhistory":
+		if kb.DsTOSCA_EventHistory == nil {
+			return nil, fmt.Errorf("DsTOSCA_EventHistory store not initialized")
+		}
+		store = *kb.DsTOSCA_EventHistory
+	case "whoiswho":
+		if kb.WhoiswhoStore == nil {
+			return nil, fmt.Errorf("WhoiswhoStore store not initialized")
+		}
+		store = *kb.WhoiswhoStore
+	default:
+		return nil, fmt.Errorf("FetchDocument: unknown store '%s'", storeName)
+	}
+
+	opts := &iface.DocumentStoreGetOptions{
+		CaseInsensitive: false,
+		PartialMatches:  false,
+	}
+	docs, err := store.Get(ctx, docID, opts)
+	if err != nil {
+		return nil, fmt.Errorf("store.Get %s/%s: %w", storeName, docID, err)
+	}
+	if len(docs) == 0 {
+		return nil, nil // document not on this node yet (replica lag)
+	}
+	if m, ok := docs[0].(map[string]interface{}); ok {
+		return m, nil
+	}
+	return nil, fmt.Errorf("FetchDocument: unexpected type for %s/%s", storeName, docID)
 }
 
 // /** this is the struct for the SQL
@@ -177,7 +265,8 @@ func InitSQLite(dbPath string) (*KnowledgeBaseSQLite, error) {
 	logger.Info("[INFO] Initializing RDBMS KnowledgeBase : %v", dbPath)
 	//GlobalLoggerDB.AddToOptimusLog("INFO", fmt.Sprintf("Initializing RDBMS KnowledgeBase : %v"), runtime.GOOS)
 	// Open SQLite Database
-	db, err := sql.Open("sqlite3", dbPath)
+	// CHANGED: use "sqlite3_vec" driver (registered in main.go init()) to load the sqlite-vec extension
+	db, err := sql.Open("sqlite3_vec", dbPath)
 	if err != nil {
 		logger.Error("[ERROR] Failed to connect to SQLite database: %v", err)
 		//GlobalLoggerDB.AddToOptimusLog("ERROR", fmt.Sprintf("Failed to connect to SQLite database: %v", err), runtime.GOOS)
