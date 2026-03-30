@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"database/sql"
 	"flag"
 	"fmt"
 	pubsub "github.com/libp2p/go-libp2p-pubsub"
@@ -10,7 +9,6 @@ import (
 	"github.com/libp2p/go-libp2p/core/host"
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/lukesampson/figlet/figletlib"
-	"github.com/mattn/go-sqlite3"
 	_ "github.com/mattn/go-sqlite3"
 	"log"
 	"optimusdb/api"
@@ -31,13 +29,6 @@ import (
 
 func init() {
 	app.InitAgentName()
-}
-
-// NEW — register sqlite3 driver with the vec0 extension loade/ For semantic search
-func init() {
-	sql.Register("sqlite3_vec", &sqlite3.SQLiteDriver{
-		Extensions: []string{"vec0"},
-	})
 }
 
 // MeshTracer implements pubsub.EventTracer for debugging mesh formation
@@ -521,12 +512,16 @@ func main() {
 	// ═══════════════════════════════════════════════════════════════
 	// NEW: SEMANTIC SEARCH INDEX
 	// ═══════════════════════════════════════════════════════════════
+	// The existing env var TINYLLAMA_ENDPOINT is set to something like
+	// http://localhost:8080/v1/completions or http://tinyllama-agent-1:8080/v1/completions.
+	// Strip the path suffix to get the base URL for /embedding.
 	llamaURL := llamaBaseURL(os.Getenv("TINYLLAMA_ENDPOINT"))
 	if llamaURL == "" {
 		llamaURL = "http://localhost:8080"
 	}
 
-	// AFTER — degrades gracefully, OptimusDB starts regardless
+	// Wrapped in a recover() closure so that if sqlite-vec or llama-server
+	// embedding is unavailable, OptimusDB degrades gracefully and still starts.
 	func() {
 		defer func() {
 			if r := recover(); r != nil {
@@ -535,14 +530,19 @@ func main() {
 			}
 		}()
 		semanticIdx, semanticErr := semantic.New(
-			rdbms.DB, llamaURL, knowledgeBaseDB.Orbit, hostMain, ps,
+			rdbms.DB,              // *sql.DB — existing KnowledgeBaseSQLite database
+			llamaURL,              // base URL of llama-server, e.g. "http://localhost:8080"
+			knowledgeBaseDB.Orbit, // *iface.OrbitDB — for IPFS Unixfs().Add()
+			hostMain,              // host.Host
+			ps,                    // *pubsub.PubSub — IPFS node's pubsub (already used for election)
 		)
 		if semanticErr != nil {
 			logger.Warn("[SEMANTIC] Index unavailable: %v", semanticErr)
 			logger.Warn("[SEMANTIC] OptimusDB starting without semantic search")
 		} else {
+			// Wire the fetcher so search results include full document content
 			semanticIdx.WithFetcher(&knowledgeBaseDB)
-			logger.Info("[SEMANTIC] Semantic search initialized (llama: %s)", llamaURL)
+			logger.Info("[SEMANTIC] Semantic search index initialized (llama: %s)", llamaURL)
 			knowledgeBaseDB.SemanticIdx = semanticIdx
 		}
 	}()
@@ -679,12 +679,9 @@ func shutdownHandler(fn func()) {
 	}()
 }
 
-// The existing env var TINYLLAMA_ENDPOINT is set to something like
-// http://localhost:8080/v1/completions or http://tinyllama-agent-1:8080/v1/completions.
-// Strip the path suffix to get the base URL for /embedding.
+// llamaBaseURL strips the path from TINYLLAMA_ENDPOINT to get the base URL.
+// "http://host:8080/v1/completions" → "http://host:8080"
 func llamaBaseURL(endpoint string) string {
-	// endpoint = "http://host:port/v1/completions"
-	// returns  = "http://host:port"
 	if idx := strings.Index(endpoint, "/v1/"); idx != -1 {
 		return endpoint[:idx]
 	}

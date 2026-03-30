@@ -265,8 +265,8 @@ func InitSQLite(dbPath string) (*KnowledgeBaseSQLite, error) {
 	logger.Info("[INFO] Initializing RDBMS KnowledgeBase : %v", dbPath)
 	//GlobalLoggerDB.AddToOptimusLog("INFO", fmt.Sprintf("Initializing RDBMS KnowledgeBase : %v"), runtime.GOOS)
 	// Open SQLite Database
-	// CHANGED: use "sqlite3_vec" driver (registered in main.go init()) to load the sqlite-vec extension
-	db, err := sql.Open("sqlite3_vec", dbPath)
+	// _allow_load_extension=1 enables SELECT load_extension() used by semantic search (vec0)
+	db, err := sql.Open("sqlite3", dbPath+"?_allow_load_extension=1")
 	if err != nil {
 		logger.Error("[ERROR] Failed to connect to SQLite database: %v", err)
 		//GlobalLoggerDB.AddToOptimusLog("ERROR", fmt.Sprintf("Failed to connect to SQLite database: %v", err), runtime.GOOS)

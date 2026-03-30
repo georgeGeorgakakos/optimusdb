@@ -104,24 +104,30 @@ func (idx *Index) WithFetcher(f DocFetcher) *Index {
 // ── Schema ────────────────────────────────────────────────────────────────────
 
 func (idx *Index) migrate() error {
+	// Load vec0 as a SQLite loadable extension.
+	// Requires _allow_load_extension=1 in the DSN (set in app/app.go InitSQLite)
+	// and /usr/lib/sqlite-vec/vec0.so present in the image (copied in Dockerfile).
+	if _, err := idx.db.Exec(`SELECT load_extension('/usr/lib/sqlite-vec/vec0')`); err != nil {
+		return fmt.Errorf("load vec0 extension (/usr/lib/sqlite-vec/vec0.so missing?): %w", err)
+	}
+
 	_, err := idx.db.Exec(fmt.Sprintf(`
-        CREATE VIRTUAL TABLE IF NOT EXISTS vec_embeddings USING vec0(
-            doc_id    TEXT PRIMARY KEY,
-            embedding float[%d]
-        )`, EmbedDim))
+		CREATE VIRTUAL TABLE IF NOT EXISTS vec_embeddings USING vec0(
+			doc_id    TEXT PRIMARY KEY,
+			embedding float[%d]
+		)`, EmbedDim))
 	if err != nil {
-		// vec0 not available — semantic search will be disabled
-		return fmt.Errorf("sqlite-vec not loaded (run: go get github.com/asg017/sqlite-vec-go-bindings/cgo and add --embedding to llama-server): %w", err)
+		return fmt.Errorf("create vec_embeddings (is sqlite-vec loaded?): %w", err)
 	}
 	_, err = idx.db.Exec(`
-        CREATE TABLE IF NOT EXISTS vec_meta (
-            doc_id      TEXT PRIMARY KEY,
-            ipfs_cid    TEXT,
-            store_name  TEXT,
-            indexed_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
-            source_text TEXT
-        )
-    `)
+		CREATE TABLE IF NOT EXISTS vec_meta (
+			doc_id      TEXT PRIMARY KEY,
+			ipfs_cid    TEXT,
+			store_name  TEXT,
+			indexed_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+			source_text TEXT
+		)
+	`)
 	return err
 }
 

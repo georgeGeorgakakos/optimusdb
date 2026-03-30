@@ -34,6 +34,14 @@ RUN wget https://github.com/ggerganov/llama.cpp/releases/download/b3790/llama-b3
     chmod +x /tmp/llama-server && \
     rm llama-b3790-bin-ubuntu-x64.zip
 
+# Download sqlite-vec loadable extension (.so) for semantic search
+# Loaded at runtime via load_extension() — no CGo bindings needed
+RUN mkdir -p /usr/lib/sqlite-vec && \
+    wget -q https://github.com/asg017/sqlite-vec/releases/download/v0.1.6/sqlite-vec-0.1.6-loadable-linux-x86_64.tar.gz && \
+    tar xzf sqlite-vec-0.1.6-loadable-linux-x86_64.tar.gz && \
+    cp vec0.so /usr/lib/sqlite-vec/vec0.so && \
+    rm sqlite-vec-0.1.6-loadable-linux-x86_64.tar.gz
+
 # Remove problematic local binding imports but keep HTTP client
 RUN echo "Configuring for HTTP-based TinyLlama..." && \
     find . -name "*.go" -type f -exec grep -l "binding/go-llama" {} \; | while read file; do \
@@ -87,6 +95,8 @@ RUN apt update && apt install -y \
 # Copy llama server and optimusdb binaries
 COPY --from=builder /tmp/llama-server /usr/local/bin/llama-server
 COPY --from=builder /optimusdbKB/optimusdb /usr/local/bin/optimusdb
+# Copy sqlite-vec loadable extension
+COPY --from=builder /usr/lib/sqlite-vec/vec0.so /usr/lib/sqlite-vec/vec0.so
 
 # Create necessary directories
 RUN mkdir -p /data/orbitdb /data/ipfs /config /models /var/log/supervisor /var/run
