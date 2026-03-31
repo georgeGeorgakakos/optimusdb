@@ -1754,23 +1754,61 @@ func RegisterMetadataRoutes(router *mux.Router, kb *app.KnowledgeBaseDB) {
 	logger.Info("[CHAT] TinyLlama URL: %s", tinyllamaURL)
 
 	// ═══════════════════════════════════════════════════════════════
-	// SEMANTIC SEARCH ENDPOINTS (NEW)
+	// SEMANTIC SEARCH ENDPOINTS — dynamic check on each request
+	// so routes work even when SemanticIdx initialises after startup.
+	//
+	// IMPORTANT: Do NOT use a static if kb.SemanticIdx != nil check here.
+	// The background goroutine in main.go sets SemanticIdx AFTER ServeHTTP
+	// has already started — a one-time nil check at startup will always
+	// skip registration. Instead, the route is always registered and
+	// delegates the nil check to request time.
 	// ═══════════════════════════════════════════════════════════════
-	if kb.SemanticIdx != nil {
-		type semanticRouter interface {
+	apiV1.HandleFunc("/semantic/search", func(w http.ResponseWriter, r *http.Request) {
+		if kb.SemanticIdx == nil {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusServiceUnavailable)
+			w.Write([]byte(`{"error":"semantic index not ready yet — llama-server may still be loading"}`))
+			return
+		}
+		type searchable interface {
 			SearchHandler(http.ResponseWriter, *http.Request)
+		}
+		if sidx, ok := kb.SemanticIdx.(searchable); ok {
+			sidx.SearchHandler(w, r)
+		}
+	}).Methods("GET")
+
+	apiV1.HandleFunc("/semantic/index", func(w http.ResponseWriter, r *http.Request) {
+		if kb.SemanticIdx == nil {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusServiceUnavailable)
+			w.Write([]byte(`{"error":"semantic index not ready yet — llama-server may still be loading"}`))
+			return
+		}
+		type indexable interface {
 			IndexHandler(http.ResponseWriter, *http.Request)
+		}
+		if sidx, ok := kb.SemanticIdx.(indexable); ok {
+			sidx.IndexHandler(w, r)
+		}
+	}).Methods("POST")
+
+	apiV1.HandleFunc("/semantic/bootstrap", func(w http.ResponseWriter, r *http.Request) {
+		if kb.SemanticIdx == nil {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusServiceUnavailable)
+			w.Write([]byte(`{"error":"semantic index not ready yet — llama-server may still be loading"}`))
+			return
+		}
+		type bootstrapable interface {
 			BootstrapHandler(http.ResponseWriter, *http.Request)
 		}
-		if sidx, ok := kb.SemanticIdx.(semanticRouter); ok {
-			apiV1.HandleFunc("/semantic/search", sidx.SearchHandler).Methods("GET")
-			apiV1.HandleFunc("/semantic/index", sidx.IndexHandler).Methods("POST")
-			apiV1.HandleFunc("/semantic/bootstrap", sidx.BootstrapHandler).Methods("POST")
-			logger.Info("[SEMANTIC] Routes registered at /api/v1/semantic/{search,index,bootstrap}")
+		if sidx, ok := kb.SemanticIdx.(bootstrapable); ok {
+			sidx.BootstrapHandler(w, r)
 		}
-	} else {
-		logger.Info("[SEMANTIC] Index not initialized, skipping semantic routes")
-	}
+	}).Methods("POST")
+
+	logger.Info("[SEMANTIC] Routes registered at /api/v1/semantic/{search,index,bootstrap} (dynamic — active once llama-server is ready)")
 }
 
 // createKBQueryFunc creates a query function that connects to OptimusDB's document stores
