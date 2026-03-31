@@ -97,7 +97,7 @@ func NewLogger(level LogLevel, logFilePath, lokiURL string) *Logger {
 		level:      level,
 		logFile:    logFile,
 		lokiURL:    lokiURL,
-		lokiBuffer: make(chan *lokiLogEntry, 1000), // Buffer up to 1000 logs
+		lokiBuffer: make(chan *lokiLogEntry, 10000), // Buffer up to 10000 logs
 		shutdown:   make(chan struct{}),
 	}
 
@@ -196,13 +196,16 @@ func (l *Logger) Log(level LogLevel, message string, args ...interface{}) {
 	// Write to file
 	log.Print(fullMessage)
 
-	// Queue for Loki (non-blocking)
-	select {
-	case l.lokiBuffer <- &lokiLogEntry{level: prefix, message: fullMessage}:
-		// Successfully queued
-	default:
-		// Buffer full, drop the log (avoid blocking)
-		log.Printf("[WARN] Loki buffer full, dropping log entry\n")
+	// Queue for Loki (non-blocking) — skip entirely if Loki is not configured
+	// to prevent buffer overflow from high-frequency election/mesh log lines
+	if l.lokiURL != "" {
+		select {
+		case l.lokiBuffer <- &lokiLogEntry{level: prefix, message: fullMessage}:
+			// Successfully queued
+		default:
+			// Buffer full, drop the log (avoid blocking)
+			log.Printf("[WARN] Loki buffer full, dropping log entry\n")
+		}
 	}
 
 	// Persist to database (handle errors gracefully)
