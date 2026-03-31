@@ -142,7 +142,7 @@ autorestart=true\n\
 stdout_logfile=/var/log/supervisor/tinyllama.log\n\
 stderr_logfile=/var/log/supervisor/tinyllama_info.log\n\
 priority=1\n\
-startretries=5\n\
+startretries=40\n\
 startsecs=10\n\
 \n\
 [program:optimusdb]\n\
