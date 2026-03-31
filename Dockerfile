@@ -29,12 +29,11 @@ RUN go mod download || true
 COPY . .
 
 # Download pre-built llama.cpp server (instead of building from source)
-# b3617 is used instead of b3790 — b3790 causes "tensor data not within file
-# bounds" errors when loading Q4_K_M GGUF files (known compatibility issue).
-RUN wget https://github.com/ggerganov/llama.cpp/releases/download/b3617/llama-b3617-bin-ubuntu-x64.zip && \
-    unzip -j llama-b3617-bin-ubuntu-x64.zip "*/llama-server" -d /tmp/ && \
+# b3790 is confirmed compatible with Q4_K_M on this server's CPU.
+RUN wget https://github.com/ggerganov/llama.cpp/releases/download/b3790/llama-b3790-bin-ubuntu-x64.zip && \
+    unzip -j llama-b3790-bin-ubuntu-x64.zip "*/llama-server" -d /tmp/ && \
     chmod +x /tmp/llama-server && \
-    rm llama-b3617-bin-ubuntu-x64.zip
+    rm llama-b3790-bin-ubuntu-x64.zip
 
 # Download sqlite-vec loadable extension (.so) for semantic search.
 # Loaded at runtime via SELECT load_extension() — no CGo bindings needed.
