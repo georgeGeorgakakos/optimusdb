@@ -29,10 +29,12 @@ RUN go mod download || true
 COPY . .
 
 # Download pre-built llama.cpp server (instead of building from source)
-RUN wget https://github.com/ggerganov/llama.cpp/releases/download/b3790/llama-b3790-bin-ubuntu-x64.zip && \
-    unzip -j llama-b3790-bin-ubuntu-x64.zip "*/llama-server" -d /tmp/ && \
+# b3617 is used instead of b3790 — b3790 causes "tensor data not within file
+# bounds" errors when loading Q4_K_M GGUF files (known compatibility issue).
+RUN wget https://github.com/ggerganov/llama.cpp/releases/download/b3617/llama-b3617-bin-ubuntu-x64.zip && \
+    unzip -j llama-b3617-bin-ubuntu-x64.zip "*/llama-server" -d /tmp/ && \
     chmod +x /tmp/llama-server && \
-    rm llama-b3790-bin-ubuntu-x64.zip
+    rm llama-b3617-bin-ubuntu-x64.zip
 
 # Download sqlite-vec loadable extension (.so) for semantic search.
 # Loaded at runtime via SELECT load_extension() — no CGo bindings needed.
@@ -105,11 +107,10 @@ COPY --from=builder /usr/lib/sqlite-vec/vec0.so /usr/lib/sqlite-vec/vec0.so
 # Create necessary directories
 RUN mkdir -p /data/orbitdb /data/ipfs /config /models /var/log/supervisor /var/run
 
-# Copy TinyLlama model from local project (models/ folder).
-# The deploy script (deploy-optimusdb-scheduled.sh) copies the valid model
-# from /opt/iccs/libs/ into running pods after kubectl apply, so a 0-byte
-# placeholder here is acceptable — supervisord will restart tinyllama once
-# the real file is in place.
+# Copy TinyLlama Q4_K_M model placeholder from local project (models/ folder).
+# The file in git is a 0-byte dummy — the deploy script copies the real model
+# from /opt/iccs/libs/tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf into running pods
+# after kubectl apply, then supervisorctl restarts tinyllama to load it.
 COPY models/tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf /models/tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf
 
 # Set executable permissions
