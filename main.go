@@ -537,6 +537,7 @@ func main() {
 			// Check if the node is shutting down before each attempt
 			select {
 			case <-termCtx.Done():
+				log.Printf("[SEMANTIC] Shutdown — background init cancelled\n")
 				logger.Info("[SEMANTIC] Shutdown — background init cancelled")
 				return
 			default:
@@ -548,6 +549,7 @@ func main() {
 				if resp != nil {
 					resp.Body.Close()
 				}
+				log.Printf("[SEMANTIC] llama-server not ready yet, retrying in %s...\n", retryDelay)
 				logger.Info("[SEMANTIC] llama-server not ready yet, retrying in %s...", retryDelay)
 				select {
 				case <-termCtx.Done():
@@ -557,12 +559,14 @@ func main() {
 				continue
 			}
 			resp.Body.Close()
+			log.Printf("[SEMANTIC] llama-server is ready — initialising semantic index...\n")
 			logger.Info("[SEMANTIC] llama-server is ready — initialising semantic index...")
 
 			// llama-server is up — attempt to create the index
 			func() {
 				defer func() {
 					if r := recover(); r != nil {
+						log.Printf("[SEMANTIC] Index init panic: %v\n", r)
 						logger.Warn("[SEMANTIC] Index init panic: %v", r)
 					}
 				}()
@@ -574,12 +578,14 @@ func main() {
 					ps,                    // *pubsub.PubSub — IPFS node's pubsub (already used for election)
 				)
 				if semanticErr != nil {
+					log.Printf("[SEMANTIC] Index unavailable: %v — will retry in %s\n", semanticErr, retryDelay)
 					logger.Warn("[SEMANTIC] Index unavailable: %v — will retry in %s", semanticErr, retryDelay)
 					return
 				}
 				// Wire the fetcher so search results include full document content
 				semanticIdx.WithFetcher(&knowledgeBaseDB)
 				knowledgeBaseDB.SemanticIdx = semanticIdx
+				log.Printf("[SEMANTIC] Semantic search index initialized (llama: %s)\n", url)
 				logger.Info("[SEMANTIC] Semantic search index initialized (llama: %s)", url)
 			}()
 
