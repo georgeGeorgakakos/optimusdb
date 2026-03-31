@@ -13,13 +13,11 @@ import (
 	"math/rand"
 	"optimusdb/logger"
 	"os"
-	"os/signal"
 	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
-	"syscall"
 	"time"
 
 	"optimusdb/app"
@@ -33,8 +31,16 @@ import (
 
 /*
 ===================================================================================
-OPTIMUSDB LEADER ELECTION - PRODUCTION VERSION v2.4.0 (ELECTION FIX)
+OPTIMUSDB LEADER ELECTION - PRODUCTION VERSION v2.4.1 (BLOCKING FIX)
 ===================================================================================
+
+CHANGELOG v2.4.1 (2026-04-01):
+✅ FIX #23: RunFullNode no longer blocks on sigChan — returns immediately after
+           launching election goroutines so main.go can proceed to launch the
+           semantic search index goroutine. Shutdown is handled by termCtx
+           from main.go which is already wired to SIGINT/SIGTERM. All background
+           goroutines check ctx.Done() and exit cleanly on shutdown.
+           Removed: os/signal, syscall imports (no longer needed).
 
 CHANGELOG v2.4.0 (2026-02-13):
 ✅ FIX #18: Default coordinator from container name (optimusdb1 auto-promotes)
@@ -2090,8 +2096,8 @@ func (n *Node) validateStartupTerm() {
 // ═══════════════════════════════════════════════════════════════════════════
 func RunFullNode(ctx context.Context, host host.Host, pubsubObj *pubsub.PubSub, discovery *app.KnowledgeBaseDB) *Node {
 	logger.Election("════════════════════════════════════════")
-	logger.Election("OptimusDB Election v2.4.0 - DEFAULT COORDINATOR FIX")
-	logger.Election("Default coordinator + Fixed election retries")
+	logger.Election("OptimusDB Election v2.4.1 - BLOCKING FIX")
+	logger.Election("Default coordinator + Fixed election retries + RunFullNode returns immediately")
 	logger.Election("════════════════════════════════════════")
 
 	var electionTopic *pubsub.Topic
@@ -2207,14 +2213,14 @@ func RunFullNode(ctx context.Context, host host.Host, pubsubObj *pubsub.PubSub, 
 	logger.Election("═══════════════════════════════════════")
 
 	// PHASE 2: Discovery Stabilization (only if mesh healthy)
+	// FIX #23 (v2.4.1): Return immediately when mesh is unhealthy instead of
+	// blocking on sigChan. Background goroutines (MonitorAndHealMesh, CheckLeaderFailure)
+	// will heal the mesh and trigger elections dynamically via ctx. This allows
+	// main.go to proceed and launch the semantic search goroutine.
 	if !node.meshHealthy {
 		logger.Error("Skipping election initiation due to unhealthy mesh")
 		logger.Error("Node will join elections dynamically when mesh heals")
-
-		sigChan := make(chan os.Signal, 1)
-		signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
-		<-sigChan
-		logger.Election("Shutdown signal received, exiting...")
+		logger.Election("[ELECTION] RunFullNode returning to main (unhealthy mesh path)")
 		return node
 	}
 
@@ -2382,11 +2388,13 @@ func RunFullNode(ctx context.Context, host host.Host, pubsubObj *pubsub.PubSub, 
 		}
 	}
 
-	sigChan := make(chan os.Signal, 1)
-	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
-	<-sigChan
-
-	logger.Election("Shutdown signal received, exiting...")
+	// FIX #23 (v2.4.1): Return immediately — do NOT block on sigChan.
+	// main.go holds termCtx which cancels all background goroutines on shutdown
+	// (ListenForElectionEvents, PeriodicReputationPublisher, CheckLeaderFailure,
+	// LogRoleStatus, MonitorAndHealMesh all check ctx.Done()).
+	// The old sigChan block here was the root cause of the semantic search goroutine
+	// never launching — main.go never reached the line after election.RunFullNode().
+	logger.Election("[ELECTION] RunFullNode returning to main — all background services running")
 	return node
 }
 
