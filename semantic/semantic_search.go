@@ -25,7 +25,7 @@ const (
 	TopicSearch  = "/optimusdb/semantic/search/1.0.0"
 	TopicResults = "/optimusdb/semantic/results/1.0.0"
 
-	EmbedDim      = 4096
+	EmbedDim      = 2048
 	DefaultTopK   = 10
 	DefaultBudget = 1500 * time.Millisecond
 )

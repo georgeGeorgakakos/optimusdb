@@ -154,7 +154,7 @@ stderr_logfile=/var/log/supervisor/optimusdb_info.log\n\
 priority=2\n\
 startretries=3\n\
 startsecs=20\n\
-environment=TINYLLAMA_ENDPOINT="http://127.0.0.1:8080/v1/completions"\n\
+environment=TINYLLAMA_ENDPOINT="http://127.0.0.1:8080/v1/completions",TINYLLAMA_EMBEDDING_ENDPOINT="http://127.0.0.1:8080/embedding"\n\
 \n\
 [group:optimusdb-suite]\n\
 programs=tinyllama,optimusdb\n' > /etc/supervisor/conf.d/supervisord.conf
