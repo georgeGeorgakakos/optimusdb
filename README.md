@@ -45,6 +45,7 @@ Key goals:
 - [Query Engine Mechanisms](docs/OptimusDB_QueriesMechanisms.md)
 - [Query Engine and Optimization](docs/OptimusDB_QueryEngineOptimization.md)
 - [Semantic Search Engine](docs/OptimusDB_SemanticSearch.md)
+- [Embeddings as a Service](docs/OptimusDB_Embeddings.md)
 - [RDBMS vs CRUD Data Store explanation](docs/OptimusDB_RDBMSvsCRUD.md)
 - [Leader Election Mechanism](docs/OptimusDB_LeaderElection.md)
 - [Election versus Discovery Peer Mechanism](docs/OptimusDB_DiscoveryVsElection.md)

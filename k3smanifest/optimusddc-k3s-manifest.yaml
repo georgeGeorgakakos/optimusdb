@@ -18,6 +18,1140 @@ data:
   OPTIMUSDB_CONTEXT: "swarmkb"
   OPTIMUSDB_BENCHMARK: "true"
 ---
+# ==================== CUSTOM AUTH CONFIGMAPS ====================
+# Custom Authentication Python Module
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: custom-auth-config
+  namespace: optimusddc
+data:
+  custom_auth_config.py: |
+    # Copyright Contributors to the Amundsen project.
+    # SPDX-License-Identifier: Apache-2.0
+    
+    """
+    OptimusDDC Custom Authentication with Keycloak Backend
+    Provides branded login page with Keycloak authentication
+    """
+    
+    import os
+    import requests
+    from flask import Flask, redirect, request, session, render_template, url_for
+    from functools import wraps
+    from typing import Optional
+    from amundsen_application.config import LocalConfig
+    from amundsen_application.models.user import User
+    
+    
+    # Keycloak configuration from environment
+    KEYCLOAK_URL = os.getenv('KEYCLOAK_URL', 'http://keycloak:8080')
+    KEYCLOAK_REALM = os.getenv('KEYCLOAK_REALM', 'optimusddc')
+    KEYCLOAK_CLIENT_ID = os.getenv('KEYCLOAK_CLIENT_ID', 'amundsen-frontend')
+    KEYCLOAK_CLIENT_SECRET = os.getenv('KEYCLOAK_CLIENT_SECRET', 'optimusddc-secret-2025')
+    
+    
+    def authenticate_with_keycloak(username: str, password: str) -> dict:
+        """
+        Authenticate against Keycloak using Direct Grant flow
+        Returns user info if successful, raises exception if failed
+        """
+        token_url = f"{KEYCLOAK_URL}/realms/{KEYCLOAK_REALM}/protocol/openid-connect/token"
+    
+        data = {
+            'grant_type': 'password',
+            'client_id': KEYCLOAK_CLIENT_ID,
+            'client_secret': KEYCLOAK_CLIENT_SECRET,
+            'username': username,
+            'password': password,
+            'scope': 'openid profile email'
+        }
+    
+        try:
+            response = requests.post(token_url, data=data, timeout=10)
+            response.raise_for_status()
+            token_data = response.json()
+    
+            # Get user info from Keycloak
+            userinfo_url = f"{KEYCLOAK_URL}/realms/{KEYCLOAK_REALM}/protocol/openid-connect/userinfo"
+            headers = {'Authorization': f"Bearer {token_data['access_token']}"}
+            userinfo_response = requests.get(userinfo_url, headers=headers, timeout=10)
+            userinfo_response.raise_for_status()
+            user_info = userinfo_response.json()
+    
+            return {
+                'user_id': user_info.get('preferred_username', username),
+                'email': user_info.get('email', f"{username}@optimusddc.com"),
+                'first_name': user_info.get('given_name', ''),
+                'last_name': user_info.get('family_name', ''),
+                'full_name': user_info.get('name', username),
+                'display_name': user_info.get('name', username),
+                'is_active': True,
+                'access_token': token_data['access_token'],
+                'refresh_token': token_data.get('refresh_token'),
+            }
+        except requests.exceptions.HTTPError as e:
+            if e.response.status_code == 401:
+                raise ValueError("Invalid username or password")
+            raise ValueError(f"Authentication failed: {str(e)}")
+        except requests.exceptions.RequestException as e:
+            raise ValueError(f"Could not connect to authentication server: {str(e)}")
+    
+    
+    def get_custom_auth_user(app: Flask) -> Optional[User]:
+        """
+        Get the current authenticated user from the session.
+        Called by Amundsen to retrieve user information.
+        """
+        user_data = session.get('user')
+        if user_data:
+            from amundsen_application.models.user import load_user
+            return load_user(user_data)
+        return None
+    
+    
+    def init_custom_auth(app: Flask) -> None:
+        """
+        Initialize custom authentication routes and handlers.
+        Sets up login/logout endpoints and authentication checks.
+        """
+    
+        @app.route('/login', methods=['GET', 'POST'])
+        def custom_login():
+            """Handle custom branded login page and authentication"""
+            # If already logged in, redirect to home
+            if 'user' in session:
+                return redirect('/')
+    
+            error = None
+            username = None
+    
+            if request.method == 'POST':
+                username = request.form.get('username', '').strip()
+                password = request.form.get('password', '')
+                remember = request.form.get('remember') == '1'
+    
+                try:
+                    # Authenticate against Keycloak
+                    user_info = authenticate_with_keycloak(username, password)
+    
+                    # Store user in session
+                    session['user'] = {
+                        'user_id': user_info['user_id'],
+                        'email': user_info['email'],
+                        'first_name': user_info['first_name'],
+                        'last_name': user_info['last_name'],
+                        'full_name': user_info['full_name'],
+                        'display_name': user_info['display_name'],
+                        'is_active': user_info['is_active']
+                    }
+    
+                    # Set session permanent if remember me is checked
+                    if remember:
+                        session.permanent = True
+                        app.permanent_session_lifetime = 604800  # 7 days
+    
+                    # Redirect to original destination or home
+                    next_page = request.args.get('next')
+                    if next_page and next_page.startswith('/'):
+                        return redirect(next_page)
+                    return redirect('/')
+    
+                except ValueError as e:
+                    error = str(e)
+                except Exception as e:
+                    error = 'An error occurred during login. Please try again.'
+                    app.logger.error(f"Login error: {str(e)}")
+    
+            # Render login template
+            return render_template(
+                'login.html',
+                error=error,
+                username=username
+            )
+    
+        @app.route('/logout')
+        def custom_logout():
+            """Handle logout - clear session and redirect to login"""
+            session.clear()
+            return redirect(url_for('custom_login'))
+    
+        # Authentication check before each request
+        @app.before_request
+        def check_authentication():
+            """Check if user is authenticated before processing requests"""
+            # Public endpoints that don't require authentication
+            public_endpoints = [
+                'custom_login',
+                'custom_logout',
+                'healthcheck',
+                'health',
+                'status',
+                'static'
+            ]
+    
+            # Skip authentication for public endpoints and static files
+            if request.endpoint in public_endpoints or \
+               (request.endpoint and request.endpoint.startswith('static')):
+                return None
+    
+            # Require authentication for all other endpoints
+            if 'user' not in session:
+                return redirect(url_for('custom_login', next=request.url))
+    
+    
+    class CustomAuthConfig(LocalConfig):
+        """
+        Custom Authentication Configuration for OptimusDDC
+        Uses branded login page with Keycloak backend authentication.
+        """
+    
+        # Authentication method
+        AUTH_USER_METHOD = get_custom_auth_user
+    
+        # Session configuration
+        SECRET_KEY = os.getenv('FLASK_SECRET_KEY', 'OptimusDDC-Change-This-Secret-Key')
+        SESSION_TYPE = 'filesystem'
+        SESSION_FILE_DIR = '/tmp/flask_session'
+        PERMANENT_SESSION_LIFETIME = 3600  # 1 hour default
+        SESSION_COOKIE_SECURE = os.getenv('SESSION_COOKIE_SECURE', 'False').lower() == 'true'
+        SESSION_COOKIE_HTTPONLY = True
+        SESSION_COOKIE_SAMESITE = 'Lax'
+    
+        # Initialize custom routes
+        INIT_CUSTOM_ROUTES = init_custom_auth
+---
+# Login HTML Template
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: login-template
+  namespace: optimusddc
+data:
+  login.html: |
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <meta http-equiv="X-UA-Compatible" content="ie=edge">
+        <title>OptimusDDC - Sign In</title>
+        <link rel="stylesheet" href="{{ url_for('static', filename='css/login.scss') }}">
+    </head>
+    <body>
+    <div class="login-page">
+        <div class="login-container">
+            <!-- Logo and Branding -->
+            <div class="logo-section">
+                <div class="logo-container">
+                    <!-- SwarmChestrate Distributed Nodes Logo -->
+                    <svg width="72" height="72" viewBox="0 0 100 100" class="swarm-logo">
+                        <defs>
+                            <linearGradient id="logoGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+                                <stop offset="0%" style="stop-color:#667eea"/>
+                                <stop offset="100%" style="stop-color:#764ba2"/>
+                            </linearGradient>
+                            <filter id="glow">
+                                <feGaussianBlur stdDeviation="2" result="coloredBlur"/>
+                                <feMerge>
+                                    <feMergeNode in="coloredBlur"/>
+                                    <feMergeNode in="SourceGraphic"/>
+                                </feMerge>
+                            </filter>
+                        </defs>
+                        
+                        <!-- Central primary node -->
+                        <circle cx="50" cy="50" r="14" fill="url(#logoGradient)" filter="url(#glow)"/>
+                        
+                        <!-- Ring 1: Surrounding nodes -->
+                        <circle cx="28" cy="28" r="9" fill="url(#logoGradient)" opacity="0.85"/>
+                        <circle cx="72" cy="28" r="9" fill="url(#logoGradient)" opacity="0.85"/>
+                        <circle cx="28" cy="72" r="9" fill="url(#logoGradient)" opacity="0.85"/>
+                        <circle cx="72" cy="72" r="9" fill="url(#logoGradient)" opacity="0.85"/>
+                        
+                        <!-- Ring 2: Outer nodes -->
+                        <circle cx="18" cy="50" r="7" fill="url(#logoGradient)" opacity="0.65"/>
+                        <circle cx="82" cy="50" r="7" fill="url(#logoGradient)" opacity="0.65"/>
+                        <circle cx="50" cy="18" r="7" fill="url(#logoGradient)" opacity="0.65"/>
+                        <circle cx="50" cy="82" r="7" fill="url(#logoGradient)" opacity="0.65"/>
+                        
+                        <!-- Connection lines representing P2P network -->
+                        <line x1="50" y1="50" x2="28" y2="28" stroke="url(#logoGradient)" stroke-width="2" opacity="0.25"/>
+                        <line x1="50" y1="50" x2="72" y2="28" stroke="url(#logoGradient)" stroke-width="2" opacity="0.25"/>
+                        <line x1="50" y1="50" x2="28" y2="72" stroke="url(#logoGradient)" stroke-width="2" opacity="0.25"/>
+                        <line x1="50" y1="50" x2="72" y2="72" stroke="url(#logoGradient)" stroke-width="2" opacity="0.25"/>
+                        <line x1="50" y1="50" x2="18" y2="50" stroke="url(#logoGradient)" stroke-width="2" opacity="0.25"/>
+                        <line x1="50" y1="50" x2="82" y2="50" stroke="url(#logoGradient)" stroke-width="2" opacity="0.25"/>
+                        <line x1="50" y1="50" x2="50" y2="18" stroke="url(#logoGradient)" stroke-width="2" opacity="0.25"/>
+                        <line x1="50" y1="50" x2="50" y2="82" stroke="url(#logoGradient)" stroke-width="2" opacity="0.25"/>
+                    </svg>
+                    
+                    <div class="brand-text">
+                        <h1 class="logo-text">OptimusDDC</h1>
+                    </div>
+                </div>
+                <p class="subtitle">Decentralized Data Catalog</p>
+                <p class="tagline">Powered by <strong>SwarmChestrate</strong></p>
+            </div>
+            
+            <!-- Error Message -->
+            {% if error %}
+            <div class="alert alert-error">
+                <svg class="alert-icon" width="20" height="20" viewBox="0 0 20 20" fill="currentColor">
+                    <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clip-rule="evenodd"/>
+                </svg>
+                <span>{{ error }}</span>
+            </div>
+            {% endif %}
+            
+            <!-- Login Form -->
+            <form method="POST" action="{{ url_for('custom_login') }}" class="login-form" id="loginForm">
+                <div class="form-group">
+                    <label for="username">Username or Email</label>
+                    <div class="input-wrapper">
+                        <svg class="input-icon" width="20" height="20" viewBox="0 0 20 20" fill="currentColor">
+                            <path fill-rule="evenodd" d="M10 9a3 3 0 100-6 3 3 0 000 6zm-7 9a7 7 0 1114 0H3z" clip-rule="evenodd"/>
+                        </svg>
+                        <input
+                                type="text"
+                                id="username"
+                                name="username"
+                                required
+                                autofocus
+                                autocomplete="username"
+                                placeholder="Enter your username"
+                                value="{{ username or '' }}"
+                                class="form-input"
+                        >
+                    </div>
+                </div>
+                
+                <div class="form-group">
+                    <label for="password">Password</label>
+                    <div class="input-wrapper">
+                        <svg class="input-icon" width="20" height="20" viewBox="0 0 20 20" fill="currentColor">
+                            <path fill-rule="evenodd" d="M5 9V7a5 5 0 0110 0v2a2 2 0 012 2v5a2 2 0 01-2 2H5a2 2 0 01-2-2v-5a2 2 0 012-2zm8-2v2H7V7a3 3 0 016 0z" clip-rule="evenodd"/>
+                        </svg>
+                        <input
+                                type="password"
+                                id="password"
+                                name="password"
+                                required
+                                autocomplete="current-password"
+                                placeholder="Enter your password"
+                                class="form-input"
+                        >
+                    </div>
+                </div>
+                
+                <div class="form-options">
+                    <label class="checkbox-label">
+                        <input type="checkbox" id="remember" name="remember" value="1">
+                        <span class="checkbox-text">Remember me for 7 days</span>
+                    </label>
+                </div>
+                
+                <button type="submit" class="login-button" id="loginButton">
+                    <span class="button-text">Sign In to OptimusDDC</span>
+                </button>
+            </form>
+            
+            <!-- Demo Credentials -->
+            <div class="demo-credentials">
+                <h3 class="demo-title">
+                    <svg width="20" height="20" viewBox="0 0 20 20" fill="currentColor">
+                        <path fill-rule="evenodd" d="M18 8a6 6 0 01-7.743 5.743L10 14l-1 1-1 1H6v2H2v-4l4.257-4.257A6 6 0 1118 8zm-6-4a1 1 0 100 2 2 2 0 012 2 1 1 0 102 0 4 4 0 00-4-4z" clip-rule="evenodd"/>
+                    </svg>
+                    Demo Credentials
+                </h3>
+                <div class="credentials-grid">
+                    <div class="credential-card" onclick="fillCredentials('demo', 'demo123')">
+                        <div class="credential-username">demo</div>
+                        <div class="credential-role">Demo User</div>
+                        <div class="credential-password">demo123</div>
+                    </div>
+                    <div class="credential-card" onclick="fillCredentials('admin', 'admin123')">
+                        <div class="credential-username">admin</div>
+                        <div class="credential-role">Administrator</div>
+                        <div class="credential-password">admin123</div>
+                    </div>
+                    <div class="credential-card" onclick="fillCredentials('analyst', 'analyst123')">
+                        <div class="credential-username">analyst</div>
+                        <div class="credential-role">Data Analyst</div>
+                        <div class="credential-password">analyst123</div>
+                    </div>
+                    <div class="credential-card" onclick="fillCredentials('scientist', 'scientist123')">
+                        <div class="credential-username">scientist</div>
+                        <div class="credential-role">Data Scientist</div>
+                        <div class="credential-password">scientist123</div>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Footer -->
+            <div class="login-footer">
+                <p>Secured by <a href="/auth" target="_blank">Keycloak</a></p>
+            </div>
+        </div>
+    </div>
+    
+    <script>
+        // Auto-fill credentials when demo card is clicked
+        function fillCredentials(username, password) {
+            document.getElementById('username').value = username;
+            document.getElementById('password').value = password;
+            document.getElementById('username').focus();
+            
+            // Add visual feedback
+            const cards = document.querySelectorAll('.credential-card');
+            cards.forEach(card => card.classList.remove('active'));
+            event.currentTarget.classList.add('active');
+        }
+        
+        // Handle form submission
+        document.getElementById('loginForm').addEventListener('submit', function(e) {
+            const button = document.getElementById('loginButton');
+            const buttonText = button.querySelector('.button-text');
+            
+            button.disabled = true;
+            buttonText.innerHTML = '<span class="spinner"></span>Signing in...';
+        });
+        
+        // Add enter key support for credential cards
+        document.querySelectorAll('.credential-card').forEach(card => {
+            card.addEventListener('keypress', function(e) {
+                if (e.key === 'Enter') {
+                    this.click();
+                }
+            });
+            card.setAttribute('tabindex', '0');
+        });
+    </script>
+    </body>
+    </html>
+---
+# Login SCSS Stylesheet
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: login-scss
+  namespace: optimusddc
+data:
+  login.scss: |
+    /* OptimusDDC Login Page Styles */
+    
+    /* CSS Variables for theming */
+    :root {
+        --primary: #667eea;
+        --secondary: #764ba2;
+        --accent: #4f46e5;
+        --dark: #1e293b;
+        --light: #f8fafc;
+        --success: #16a34a;
+        --error: #dc2626;
+        --warning: #eab308;
+        --gray-50: #f9fafb;
+        --gray-100: #f3f4f6;
+        --gray-200: #e5e7eb;
+        --gray-300: #d1d5db;
+        --gray-400: #9ca3af;
+        --gray-500: #6b7280;
+        --gray-600: #4b5563;
+        --gray-700: #374151;
+        --gray-800: #1f2937;
+        --gray-900: #111827;
+    }
+    
+    /* Global Reset */
+    * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+    }
+    
+    /* Body and Page Layout */
+    body {
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen', 'Ubuntu', 'Cantarell', 'Helvetica Neue', sans-serif;
+        background: linear-gradient(135deg, var(--primary) 0%, var(--secondary) 100%);
+        min-height: 100vh;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 20px;
+        -webkit-font-smoothing: antialiased;
+        -moz-osx-font-smoothing: grayscale;
+    }
+    
+    .login-page {
+        width: 100%;
+        max-width: 500px;
+        animation: fadeIn 0.6s ease-out;
+    }
+    
+    @keyframes fadeIn {
+        from {
+            opacity: 0;
+            transform: translateY(20px);
+        }
+        to {
+            opacity: 1;
+            transform: translateY(0);
+        }
+    }
+    
+    /* Login Container */
+    .login-container {
+        background: white;
+        border-radius: 24px;
+        box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3), 0 0 0 1px rgba(255, 255, 255, 0.1);
+        padding: 48px 40px;
+        position: relative;
+        overflow: hidden;
+    }
+    
+    .login-container::before {
+        content: '';
+        position: absolute;
+        top: 0;
+        left: 0;
+        right: 0;
+        height: 4px;
+        background: linear-gradient(90deg, var(--primary), var(--secondary));
+    }
+    
+    /* Logo Section */
+    .logo-section {
+        text-align: center;
+        margin-bottom: 36px;
+    }
+    
+    .logo-container {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 16px;
+        margin-bottom: 16px;
+    }
+    
+    .swarm-logo {
+        filter: drop-shadow(0 10px 25px rgba(102, 126, 234, 0.4));
+        animation: float 3s ease-in-out infinite;
+    }
+    
+    @keyframes float {
+        0%, 100% {
+            transform: translateY(0px);
+        }
+        50% {
+            transform: translateY(-10px);
+        }
+    }
+    
+    .brand-text {
+        display: flex;
+        flex-direction: column;
+    }
+    
+    .logo-text {
+        font-size: 42px;
+        font-weight: 800;
+        background: linear-gradient(135deg, var(--primary) 0%, var(--secondary) 100%);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        background-clip: text;
+        letter-spacing: -0.5px;
+        line-height: 1;
+    }
+    
+    .subtitle {
+        color: var(--gray-600);
+        font-size: 15px;
+        font-weight: 500;
+        margin-top: 8px;
+    }
+    
+    .tagline {
+        color: var(--gray-500);
+        font-size: 13px;
+        margin-top: 6px;
+    }
+    
+    .tagline strong {
+        color: var(--primary);
+        font-weight: 600;
+    }
+    
+    /* Alert Messages */
+    .alert {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding: 14px 16px;
+        border-radius: 12px;
+        margin-bottom: 24px;
+        font-size: 14px;
+        animation: slideDown 0.3s ease-out;
+    }
+    
+    @keyframes slideDown {
+        from {
+            opacity: 0;
+            transform: translateY(-10px);
+        }
+        to {
+            opacity: 1;
+            transform: translateY(0);
+        }
+    }
+    
+    .alert-error {
+        background-color: #fef2f2;
+        border: 1px solid #fecaca;
+        color: #991b1b;
+    }
+    
+    .alert-success {
+        background-color: #f0fdf4;
+        border: 1px solid #bbf7d0;
+        color: #166534;
+    }
+    
+    .alert-icon {
+        flex-shrink: 0;
+    }
+    
+    /* Form Styles */
+    .login-form {
+        margin-bottom: 32px;
+    }
+    
+    .form-group {
+        margin-bottom: 20px;
+    }
+    
+    .form-group label {
+        display: block;
+        margin-bottom: 8px;
+        color: var(--gray-700);
+        font-weight: 600;
+        font-size: 14px;
+    }
+    
+    .input-wrapper {
+        position: relative;
+    }
+    
+    .input-icon {
+        position: absolute;
+        left: 16px;
+        top: 50%;
+        transform: translateY(-50%);
+        color: var(--gray-400);
+        pointer-events: none;
+    }
+    
+    .form-input {
+        width: 100%;
+        padding: 14px 16px 14px 48px;
+        border: 2px solid var(--gray-200);
+        border-radius: 12px;
+        font-size: 15px;
+        transition: all 0.2s ease;
+        background-color: var(--gray-50);
+        color: var(--gray-900);
+    }
+    
+    .form-input::placeholder {
+        color: var(--gray-400);
+    }
+    
+    .form-input:hover {
+        border-color: var(--gray-300);
+        background-color: white;
+    }
+    
+    .form-input:focus {
+        outline: none;
+        border-color: var(--primary);
+        background-color: white;
+        box-shadow: 0 0 0 4px rgba(102, 126, 234, 0.1);
+    }
+    
+    .form-input:focus + .input-icon {
+        color: var(--primary);
+    }
+    
+    /* Form Options */
+    .form-options {
+        margin-bottom: 24px;
+    }
+    
+    .checkbox-label {
+        display: flex;
+        align-items: center;
+        cursor: pointer;
+        user-select: none;
+    }
+    
+    .checkbox-label input[type="checkbox"] {
+        width: 18px;
+        height: 18px;
+        margin-right: 10px;
+        cursor: pointer;
+        accent-color: var(--primary);
+    }
+    
+    .checkbox-text {
+        color: var(--gray-600);
+        font-size: 14px;
+    }
+    
+    /* Login Button */
+    .login-button {
+        width: 100%;
+        padding: 16px 24px;
+        background: linear-gradient(135deg, var(--primary) 0%, var(--secondary) 100%);
+        color: white;
+        border: none;
+        border-radius: 12px;
+        font-size: 16px;
+        font-weight: 600;
+        cursor: pointer;
+        transition: all 0.3s ease;
+        box-shadow: 0 4px 14px rgba(102, 126, 234, 0.4);
+        position: relative;
+        overflow: hidden;
+    }
+    
+    .login-button::before {
+        content: '';
+        position: absolute;
+        top: 0;
+        left: -100%;
+        width: 100%;
+        height: 100%;
+        background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.2), transparent);
+        transition: left 0.5s ease;
+    }
+    
+    .login-button:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 12px 24px rgba(102, 126, 234, 0.5);
+    }
+    
+    .login-button:hover::before {
+        left: 100%;
+    }
+    
+    .login-button:active {
+        transform: translateY(0);
+    }
+    
+    .login-button:disabled {
+        opacity: 0.7;
+        cursor: not-allowed;
+        transform: none;
+    }
+    
+    .button-text {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 8px;
+    }
+    
+    /* Loading Spinner */
+    .spinner {
+        display: inline-block;
+        width: 16px;
+        height: 16px;
+        border: 2px solid rgba(255, 255, 255, 0.3);
+        border-radius: 50%;
+        border-top-color: white;
+        animation: spin 0.6s linear infinite;
+    }
+    
+    @keyframes spin {
+        to {
+            transform: rotate(360deg);
+        }
+    }
+    
+    /* Demo Credentials Section */
+    .demo-credentials {
+        margin-top: 32px;
+        padding: 24px;
+        background: linear-gradient(135deg, var(--gray-50) 0%, var(--gray-100) 100%);
+        border-radius: 16px;
+        border: 2px solid var(--gray-200);
+    }
+    
+    .demo-title {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        color: var(--gray-700);
+        font-size: 16px;
+        font-weight: 600;
+        margin-bottom: 16px;
+    }
+    
+    .demo-title svg {
+        color: var(--primary);
+    }
+    
+    .credentials-grid {
+        display: grid;
+        grid-template-columns: repeat(2, 1fr);
+        gap: 12px;
+    }
+    
+    .credential-card {
+        padding: 14px;
+        background: white;
+        border-radius: 10px;
+        border: 2px solid var(--gray-200);
+        cursor: pointer;
+        transition: all 0.2s ease;
+        text-align: center;
+    }
+    
+    .credential-card:hover {
+        border-color: var(--primary);
+        box-shadow: 0 4px 12px rgba(102, 126, 234, 0.15);
+        transform: translateY(-2px);
+    }
+    
+    .credential-card:active,
+    .credential-card.active {
+        border-color: var(--secondary);
+        box-shadow: 0 2px 8px rgba(118, 75, 162, 0.2);
+        transform: translateY(0);
+    }
+    
+    .credential-username {
+        color: var(--primary);
+        font-weight: 700;
+        font-size: 16px;
+        font-family: 'Courier New', 'Consolas', monospace;
+        margin-bottom: 4px;
+    }
+    
+    .credential-role {
+        color: var(--gray-600);
+        font-size: 11px;
+        font-weight: 500;
+        margin-bottom: 6px;
+    }
+    
+    .credential-password {
+        color: var(--gray-500);
+        font-size: 13px;
+        font-family: 'Courier New', 'Consolas', monospace;
+    }
+    
+    /* Footer */
+    .login-footer {
+        margin-top: 28px;
+        padding-top: 20px;
+        border-top: 1px solid var(--gray-200);
+        text-align: center;
+    }
+    
+    .login-footer p {
+        color: var(--gray-500);
+        font-size: 13px;
+    }
+    
+    .login-footer a {
+        color: var(--primary);
+        text-decoration: none;
+        font-weight: 500;
+        transition: color 0.2s ease;
+    }
+    
+    .login-footer a:hover {
+        color: var(--secondary);
+        text-decoration: underline;
+    }
+    
+    /* Responsive Design */
+    @media (max-width: 640px) {
+        body {
+            padding: 10px;
+        }
+    
+        .login-container {
+            padding: 36px 28px;
+            border-radius: 20px;
+        }
+    
+        .logo-text {
+            font-size: 32px;
+        }
+    
+        .swarm-logo {
+            width: 56px;
+            height: 56px;
+        }
+    
+        .credentials-grid {
+            grid-template-columns: 1fr;
+        }
+    
+        .credential-card {
+            padding: 16px;
+        }
+    }
+    
+    /* Accessibility */
+    .credential-card:focus {
+        outline: 2px solid var(--primary);
+        outline-offset: 2px;
+    }
+    
+    input:focus-visible {
+        outline: 2px solid var(--primary);
+        outline-offset: 2px;
+    }
+    
+    button:focus-visible {
+        outline: 2px solid white;
+        outline-offset: 2px;
+    }
+    
+    /* Print Styles */
+    @media print {
+        body {
+            background: white;
+        }
+    
+        .login-container {
+            box-shadow: none;
+        }
+    
+        .demo-credentials {
+            display: none;
+        }
+    }
+---
+# ==================== KEYCLOAK INFRASTRUCTURE ====================
+# Keycloak Realm with Pre-configured Users
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: keycloak-realm-config
+  namespace: optimusddc
+data:
+  optimusddc-realm.json: |
+    {
+      "realm": "optimusddc",
+      "enabled": true,
+      "displayName": "OptimusDDC",
+      "sslRequired": "none",
+      "registrationAllowed": false,
+      "loginWithEmailAllowed": true,
+      "duplicateEmailsAllowed": false,
+      "resetPasswordAllowed": true,
+      "editUsernameAllowed": false,
+      "bruteForceProtected": true,
+      "permanentLockout": false,
+      "maxFailureWaitSeconds": 900,
+      "failureFactor": 5,
+      "clients": [
+        {
+          "clientId": "amundsen-frontend",
+          "name": "OptimusDDC Frontend",
+          "enabled": true,
+          "clientAuthenticatorType": "client-secret",
+          "secret": "optimusddc-secret-2025",
+          "redirectUris": ["*"],
+          "webOrigins": ["*"],
+          "protocol": "openid-connect",
+          "publicClient": false,
+          "standardFlowEnabled": true,
+          "directAccessGrantsEnabled": true,
+          "serviceAccountsEnabled": false,
+          "fullScopeAllowed": true,
+          "defaultClientScopes": ["web-origins", "profile", "roles", "email"]
+        }
+      ],
+      "users": [
+        {
+          "username": "demo",
+          "enabled": true,
+          "emailVerified": true,
+          "firstName": "Demo",
+          "lastName": "User",
+          "email": "demo@optimusddc.com",
+          "credentials": [{"type": "password", "value": "demo123", "temporary": false}]
+        },
+        {
+          "username": "admin",
+          "enabled": true,
+          "emailVerified": true,
+          "firstName": "Admin",
+          "lastName": "User",
+          "email": "admin@optimusddc.com",
+          "credentials": [{"type": "password", "value": "admin123", "temporary": false}]
+        },
+        {
+          "username": "analyst",
+          "enabled": true,
+          "emailVerified": true,
+          "firstName": "Data",
+          "lastName": "Analyst",
+          "email": "analyst@optimusddc.com",
+          "credentials": [{"type": "password", "value": "analyst123", "temporary": false}]
+        },
+        {
+          "username": "scientist",
+          "enabled": true,
+          "emailVerified": true,
+          "firstName": "Data",
+          "lastName": "Scientist",
+          "email": "scientist@optimusddc.com",
+          "credentials": [{"type": "password", "value": "scientist123", "temporary": false}]
+        }
+      ],
+      "roles": {
+        "realm": [
+          {"name": "user", "description": "User privileges"},
+          {"name": "admin", "description": "Administrator privileges"}
+        ]
+      }
+    }
+---
+# Keycloak Admin Credentials
+apiVersion: v1
+kind: Secret
+metadata:
+  name: keycloak-admin
+  namespace: optimusddc
+type: Opaque
+stringData:
+  admin-username: admin
+  admin-password: admin123
+---
+# Keycloak Persistent Storage
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: keycloak-data
+  namespace: optimusddc
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: local-path
+  resources:
+    requests:
+      storage: 2Gi
+---
+# Keycloak Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: keycloak
+  namespace: optimusddc
+  labels:
+    app: keycloak
+spec:
+  type: ClusterIP
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080
+  selector:
+    app: keycloak
+---
+# Keycloak Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: keycloak
+  namespace: optimusddc
+  labels:
+    app: keycloak
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: keycloak
+  template:
+    metadata:
+      labels:
+        app: keycloak
+    spec:
+      containers:
+        - name: keycloak
+          image: quay.io/keycloak/keycloak:23.0.7
+          args:
+            - start-dev
+            - --import-realm
+          env:
+            - name: KEYCLOAK_ADMIN
+              valueFrom:
+                secretKeyRef:
+                  name: keycloak-admin
+                  key: admin-username
+            - name: KEYCLOAK_ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: keycloak-admin
+                  key: admin-password
+            - name: KC_PROXY
+              value: "edge"
+            - name: KC_HTTP_ENABLED
+              value: "true"
+            - name: KC_HOSTNAME_STRICT
+              value: "false"
+            - name: KC_HOSTNAME_STRICT_HTTPS
+              value: "false"
+            - name: KC_HEALTH_ENABLED
+              value: "true"
+          ports:
+            - name: http
+              containerPort: 8080
+          volumeMounts:
+            - name: keycloak-data
+              mountPath: /opt/keycloak/data
+            - name: realm-config
+              mountPath: /opt/keycloak/data/import
+          startupProbe:
+            httpGet:
+              path: /health/ready
+              port: 8080
+            initialDelaySeconds: 30
+            periodSeconds: 5
+            failureThreshold: 60
+          readinessProbe:
+            httpGet:
+              path: /health/ready
+              port: 8080
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /health/live
+              port: 8080
+            initialDelaySeconds: 60
+            periodSeconds: 20
+          resources:
+            limits:
+              memory: "1Gi"
+              cpu: "1000m"
+            requests:
+              memory: "512Mi"
+              cpu: "250m"
+      volumes:
+        - name: keycloak-data
+          persistentVolumeClaim:
+            claimName: keycloak-data
+        - name: realm-config
+          configMap:
+            name: keycloak-realm-config
+
+---
 # ==================== OPTIMUSDB NODE 1 ====================
 apiVersion: v1
 kind: PersistentVolumeClaim
@@ -150,12 +1284,27 @@ spec:
                 configMapKeyRef:
                   name: optimusdb-config
                   key: OPTIMUSDB_BENCHMARK
+            # EMS integration via SSH tunnel (ActiveMQ STOMP)
+            - name: HOST_IP
+              valueFrom: { fieldRef: { fieldPath: status.hostIP } }
+            - name: EMS_SERVICE_NAME
+              valueFrom: { fieldRef: { fieldPath: status.hostIP } }
+            - name: EMS_STOMP_PORT
+              value: "61610"
+            - name: EMS_TOPIC
+              value: "/topic/>"
+            - name: MQ_USER
+              value: "aaa"
+            - name: MQ_PASS
+              value: "111"
+            - name: MQ_CLIENT_ID
+              value: "$(POD_NAME)"
           startupProbe:
             tcpSocket:
               port: 8089
             initialDelaySeconds: 5
             periodSeconds: 5
-            failureThreshold: 30
+            failureThreshold: 60
           readinessProbe:
             tcpSocket:
               port: 8089
@@ -313,6 +1462,21 @@ spec:
                 configMapKeyRef:
                   name: optimusdb-config
                   key: OPTIMUSDB_BENCHMARK
+            # EMS integration via SSH tunnel (ActiveMQ STOMP)
+            - name: HOST_IP
+              valueFrom: { fieldRef: { fieldPath: status.hostIP } }
+            - name: EMS_SERVICE_NAME
+              valueFrom: { fieldRef: { fieldPath: status.hostIP } }
+            - name: EMS_STOMP_PORT
+              value: "61610"
+            - name: EMS_TOPIC
+              value: "/topic/>"
+            - name: MQ_USER
+              value: "aaa"
+            - name: MQ_PASS
+              value: "111"
+            - name: MQ_CLIENT_ID
+              value: "$(POD_NAME)"
           startupProbe:
             tcpSocket:
               port: 8089
@@ -476,6 +1640,21 @@ spec:
                 configMapKeyRef:
                   name: optimusdb-config
                   key: OPTIMUSDB_BENCHMARK
+            # EMS integration via SSH tunnel (ActiveMQ STOMP)
+            - name: HOST_IP
+              valueFrom: { fieldRef: { fieldPath: status.hostIP } }
+            - name: EMS_SERVICE_NAME
+              valueFrom: { fieldRef: { fieldPath: status.hostIP } }
+            - name: EMS_STOMP_PORT
+              value: "61610"
+            - name: EMS_TOPIC
+              value: "/topic/>"
+            - name: MQ_USER
+              value: "aaa"
+            - name: MQ_PASS
+              value: "111"
+            - name: MQ_CLIENT_ID
+              value: "$(POD_NAME)"
           startupProbe:
             tcpSocket:
               port: 8089
@@ -528,6 +1707,8 @@ spec:
       port: 5001
       targetPort: 5001
 ---
+
+---
 # ==================== CATALOG SEARCH ====================
 apiVersion: v1
 kind: Service
@@ -577,7 +1758,7 @@ spec:
           command:
             - gunicorn
             - "-w"
-            - "2"
+            - "4"
             - "--bind"
             - ":5013"
             - "--timeout"
@@ -658,7 +1839,7 @@ spec:
           command:
             - gunicorn
             - "-w"
-            - "2"
+            - "4"
             - "--bind"
             - ":5014"
             - "--timeout"
@@ -688,7 +1869,7 @@ spec:
             timeoutSeconds: 5
             failureThreshold: 3
 ---
-# ==================== CATALOG FRONTEND ====================
+# ==================== CATALOG FRONTEND WITH CUSTOM AUTH ====================
 apiVersion: v1
 kind: Service
 metadata:
@@ -721,6 +1902,54 @@ spec:
     spec:
       imagePullSecrets:
         - name: ghcr-secret
+      initContainers:
+        # Init container copies custom auth files from ConfigMaps to shared volume
+        - name: setup-custom-auth
+          image: busybox:latest
+          command:
+            - sh
+            - -c
+            - |
+              echo "================================================"
+              echo "Setting up custom authentication files..."
+              echo "================================================"
+              mkdir -p /app-files/templates /app-files/static/css
+              echo "✓ Created directories"
+              
+              cp /mnt/custom-auth/custom_auth_config.py /app-files/
+              echo "✓ Copied custom_auth_config.py"
+              
+              cp /mnt/login-template/login.html /app-files/templates/
+              echo "✓ Copied login.html"
+              
+              cp /mnt/login-scss/login.scss /app-files/static/css/
+              echo "✓ Copied login.scss"
+              
+              chmod -R 644 /app-files/
+              echo "✓ Set permissions"
+              
+              echo ""
+              echo "Files in /app-files:"
+              ls -lah /app-files/
+              echo ""
+              echo "Files in /app-files/templates:"
+              ls -lah /app-files/templates/
+              echo ""
+              echo "Files in /app-files/static/css:"
+              ls -lah /app-files/static/css/
+              echo ""
+              echo "================================================"
+              echo "✓ Custom authentication setup complete!"
+              echo "================================================"
+          volumeMounts:
+            - name: custom-auth
+              mountPath: /mnt/custom-auth
+            - name: login-template
+              mountPath: /mnt/login-template
+            - name: login-scss
+              mountPath: /mnt/login-scss
+            - name: app-files
+              mountPath: /app-files
       containers:
         - name: catalogfrontend
           image: ghcr.io/georgegeorgakakos/optimusddc/catalogfrontend:latest
@@ -730,21 +1959,65 @@ spec:
               containerPort: 5015
               protocol: TCP
           env:
+            # ============ Custom Authentication Configuration ============
+            - name: FRONTEND_SVC_CONFIG_MODULE_CLASS
+              value: "amundsen_application.custom_auth_config.CustomAuthConfig"
+
+            # Keycloak Backend Configuration
+            - name: KEYCLOAK_URL
+              value: "http://keycloak:8080"
+            - name: KEYCLOAK_REALM
+              value: "optimusddc"
+            - name: KEYCLOAK_CLIENT_ID
+              value: "amundsen-frontend"
+            - name: KEYCLOAK_CLIENT_SECRET
+              value: "optimusddc-secret-2025"
+
+            # Session Configuration
+            - name: FLASK_SECRET_KEY
+              value: "OptimusDDC-Production-Secret-Key-Change-This"
+
+            # ============ Service Endpoints (from original config) ============
             - name: SEARCHSERVICE_BASE
               value: "http://catalogsearch:5013"
             - name: METADATASERVICE_BASE
               value: "http://catalogmetadata:5014"
-            - name: FRONTEND_SVC_CONFIG_MODULE_CLASS
-              value: "amundsen_application.config.TestConfig"
+            - name: REQUEST_SESSION_TIMEOUT_SEC
+              value: "15"
           command:
-            - gunicorn
-            - "-w"
-            - "2"
-            - "--bind"
-            - ":5015"
-            - "--timeout"
-            - "120"
-            - "amundsen_application.wsgi"
+            - sh
+            - -c
+            - |
+              echo "================================================"
+              echo "Copying custom auth files to Amundsen directory..."
+              echo "================================================"
+              
+              # Ensure target directories exist
+              mkdir -p /amundsen/amundsen_application/static/css
+              mkdir -p /amundsen/amundsen_application/templates
+              
+              cp -v /app-files/custom_auth_config.py /amundsen/amundsen_application/
+              cp -v /app-files/templates/login.html /amundsen/amundsen_application/templates/
+              cp -v /app-files/static/css/login.scss /amundsen/amundsen_application/static/css/
+              
+              echo ""
+              echo "Verifying files:"
+              ls -la /amundsen/amundsen_application/ | grep custom_auth || echo "⚠ custom_auth_config.py not found"
+              ls -la /amundsen/amundsen_application/templates/ | grep login || echo "⚠ login.html not found"
+              ls -la /amundsen/amundsen_application/static/css/ | grep login || echo "⚠ login.scss not found"
+              
+              echo ""
+              echo "First 10 lines of login.scss:"
+              head -10 /amundsen/amundsen_application/static/css/login.scss
+              
+              echo ""
+              echo "================================================"
+              echo "Starting Gunicorn with custom authentication..."
+              echo "================================================"
+              exec gunicorn -w 2 --bind :5015 --timeout 120 amundsen_application.wsgi
+          volumeMounts:
+            - name: app-files
+              mountPath: /app-files
           resources:
             limits:
               memory: "768Mi"
@@ -766,6 +2039,18 @@ spec:
             initialDelaySeconds: 60
             periodSeconds: 20
             timeoutSeconds: 5
+      volumes:
+        - name: custom-auth
+          configMap:
+            name: custom-auth-config
+        - name: login-template
+          configMap:
+            name: login-template
+        - name: login-scss
+          configMap:
+            name: login-scss
+        - name: app-files
+          emptyDir: {}
 ---
 # ==============================================================================
 # TRAEFIK MIDDLEWARES
@@ -805,7 +2090,25 @@ spec:
       - /optimusdb3
 ---
 # ==============================================================================
-# TRAEFIK INGRESSROUTES - OPTION 4: HYBRID APPROACH
+# KEYCLOAK ROUTE (Highest Priority - Add this FIRST)
+# ==============================================================================
+# Route: /auth/* and /realms/* → Keycloak Admin Console and OIDC endpoints
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: keycloak-auth
+  namespace: optimusddc
+spec:
+  entryPoints:
+    - web
+  routes:
+    - match: PathPrefix(`/auth`) || PathPrefix(`/realms`)
+      kind: Rule
+      priority: 110
+      services:
+        - name: keycloak
+          port: 8080
+---
 # ==============================================================================
 # Strategy:
 # 1. BACKWARD COMPATIBILITY: /swarmkb/command → node 1 only
@@ -819,6 +2122,7 @@ spec:
 # Route: /swarmkb/command → OptimusDB Node 1 ONLY
 # This maintains backward compatibility with existing code that expects
 # /swarmkb/command to go to the primary node
+---
 apiVersion: traefik.io/v1alpha1
 kind: IngressRoute
 metadata:
@@ -1050,7 +2354,31 @@ spec:
         - name: optimusdb3
           port: 8089
 ---
-# Route: / → CatalogFrontend (Amundsen UI - default/root)
+# ------------------------------------------------------------------------------
+# NEW: Semantic Search API → Node-specific (use /optimusdbN/api/v1/semantic/...)
+# Also expose as load-balanced for convenience
+# ------------------------------------------------------------------------------
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: optimusdb-semantic-api
+  namespace: optimusddc
+spec:
+  entryPoints:
+    - web
+  routes:
+    - match: PathPrefix(`/api/v1/semantic`)
+      kind: Rule
+      priority: 60
+      services:
+        - name: optimusdb1
+          port: 8089
+        - name: optimusdb2
+          port: 8089
+        - name: optimusdb3
+          port: 8089
+---
+# Route: / → CatalogFrontend ( UI - default/root)
 apiVersion: traefik.io/v1alpha1
 kind: IngressRoute
 metadata:
@@ -1102,5 +2430,248 @@ spec:
 #
 # Query specific node:
 #   GET /optimusdb2/swarmkb/agent/status → Always goes to node 2
+#
+# ==============================================================================
+#
+# ==============================================================================
+# NEW: LLAMA-SERVER SERVICES (port 8080)
+# ==============================================================================
+# The existing optimusdbN ClusterIP services only expose port 8089 (Go app).
+# These new services expose port 8080 on the same pods so Traefik can route
+# to llama-server directly without touching the Go application.
+# Selector matches the same pods as the existing optimusdbN services.
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: optimusdb1-llama
+  namespace: optimusddc
+  labels:
+    app: optimusdb
+    node: "1"
+    component: llama
+spec:
+  type: ClusterIP
+  selector:
+    app: optimusdb
+    node: "1"
+  ports:
+    - name: llama
+      port: 8080
+      targetPort: 8080
+      protocol: TCP
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: optimusdb2-llama
+  namespace: optimusddc
+  labels:
+    app: optimusdb
+    node: "2"
+    component: llama
+spec:
+  type: ClusterIP
+  selector:
+    app: optimusdb
+    node: "2"
+  ports:
+    - name: llama
+      port: 8080
+      targetPort: 8080
+      protocol: TCP
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: optimusdb3-llama
+  namespace: optimusddc
+  labels:
+    app: optimusdb
+    node: "3"
+    component: llama
+spec:
+  type: ClusterIP
+  selector:
+    app: optimusdb
+    node: "3"
+  ports:
+    - name: llama
+      port: 8080
+      targetPort: 8080
+      protocol: TCP
+---
+# ==============================================================================
+# NEW: EMBEDDING MIDDLEWARES
+# ==============================================================================
+#
+# IP allowlist: restricts /embedding access to cluster-internal traffic only.
+# The embedding endpoint runs CPU-bound inference — unrestricted external access
+# would allow anyone reaching 193.225.250.240 to exhaust CPU resources for free.
+#
+# Allowed source ranges:
+#   127.0.0.1/32         localhost — host-level scripts and deploy script
+#   193.225.250.240/32   host public IP — self-calls from the server
+#   10.42.0.0/16         K3s pod CIDR — all pods in the cluster
+#   10.43.0.0/16         K3s service CIDR — ClusterIP services
+#
+# To allow an additional external IP (e.g. a research workstation or CI runner),
+# add it to the sourceRange list below and kubectl apply the manifest.
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: embedding-ipallowlist
+  namespace: optimusddc
+spec:
+  ipAllowList:
+    sourceRange:
+      - 127.0.0.1/32          # localhost — host-level scripts and deploy script
+      - 193.225.250.240/32    # host public IP — self-calls from the server
+      - 10.42.0.0/16          # K3s pod CIDR — all pods in the cluster
+      - 10.43.0.0/16          # K3s service CIDR — ClusterIP services
+---
+# Strip /optimusdb1/embedding → /embedding before forwarding to llama-server.
+# Each node needs its own middleware because stripPrefix is path-specific.
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: embedding-node1-stripprefix
+  namespace: optimusddc
+spec:
+  stripPrefix:
+    prefixes:
+      - /optimusdb1/embedding
+---
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: embedding-node2-stripprefix
+  namespace: optimusddc
+spec:
+  stripPrefix:
+    prefixes:
+      - /optimusdb2/embedding
+---
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: embedding-node3-stripprefix
+  namespace: optimusddc
+spec:
+  stripPrefix:
+    prefixes:
+      - /optimusdb3/embedding
+---
+# ==============================================================================
+# NEW: EMBEDDING INGRESSROUTES (Priority 8)
+# ==============================================================================
+#
+# Priority 8 — above the generic /optimusdbN/* catch-all (priority 5) so these
+# routes match BEFORE the Go app routes strip the prefix to port 8089.
+# Targets port 8080 (llama-server) directly, not port 8089 (Go app).
+#
+# Access pattern after this change:
+#   POST http://193.225.250.240/optimusdb1/embedding  → node 1 llama-server
+#   POST http://193.225.250.240/optimusdb2/embedding  → node 2 llama-server
+#   POST http://193.225.250.240/optimusdb3/embedding  → node 3 llama-server
+#
+# Route: /optimusdb1/embedding → optimusdb1-llama:8080 (llama-server node 1)
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: optimusdb1-embedding
+  namespace: optimusddc
+spec:
+  entryPoints:
+    - web
+  routes:
+    - match: PathPrefix(`/optimusdb1/embedding`)
+      kind: Rule
+      priority: 8
+      middlewares:
+        - name: embedding-ipallowlist
+        - name: embedding-node1-stripprefix
+      services:
+        - name: optimusdb1-llama
+          port: 8080
+---
+# Route: /optimusdb2/embedding → optimusdb2-llama:8080 (llama-server node 2)
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: optimusdb2-embedding
+  namespace: optimusddc
+spec:
+  entryPoints:
+    - web
+  routes:
+    - match: PathPrefix(`/optimusdb2/embedding`)
+      kind: Rule
+      priority: 8
+      middlewares:
+        - name: embedding-ipallowlist
+        - name: embedding-node2-stripprefix
+      services:
+        - name: optimusdb2-llama
+          port: 8080
+---
+# Route: /optimusdb3/embedding → optimusdb3-llama:8080 (llama-server node 3)
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: optimusdb3-embedding
+  namespace: optimusddc
+spec:
+  entryPoints:
+    - web
+  routes:
+    - match: PathPrefix(`/optimusdb3/embedding`)
+      kind: Rule
+      priority: 8
+      middlewares:
+        - name: embedding-ipallowlist
+        - name: embedding-node3-stripprefix
+      services:
+        - name: optimusdb3-llama
+          port: 8080
+
+# ==============================================================================
+# UPDATED ROUTING SUMMARY (additions to existing routing summary above)
+# ==============================================================================
+#
+# EMBEDDING ENDPOINTS — NEW (Priority 8, IP-restricted):
+#   POST /optimusdb1/embedding → optimusdb1-llama:8080 (llama-server node 1)
+#   POST /optimusdb2/embedding → optimusdb2-llama:8080 (llama-server node 2)
+#   POST /optimusdb3/embedding → optimusdb3-llama:8080 (llama-server node 3)
+#
+# ALLOWED SOURCE IPs:
+#   127.0.0.1/32         localhost
+#   193.225.250.240/32   host self-calls
+#   10.42.0.0/16         K3s pod CIDR
+#   10.43.0.0/16         K3s service CIDR
+#
+# PRIORITY ORDER (complete):
+#   110  /auth, /realms → keycloak
+#   100  /swarmkb/command → optimusdb1 only
+#    60  /api/v1/chat, /api/v1/semantic → load-balanced
+#    50  /swarmkb/agent/status, /inventory, /log → load-balanced
+#    10  /swarmkb/* catch-all → load-balanced
+#     8  /optimusdbN/embedding → llamaN:8080 (IP-restricted) ← NEW
+#     5  /optimusdbN/* → optimusdbN:8089 (Go app)
+#     1  / → catalogfrontend
+#
+# VERIFY after apply (run from the server — host IP is in the allowlist):
+#   curl -s -X POST http://193.225.250.240/optimusdb1/embedding \
+#     -H "Content-Type: application/json" \
+#     -d '{"content":"solar farm Greece"}' | python3 -c \
+#     "import json,sys; d=json.load(sys.stdin); print(f'Dimensions: {len(d[\"embedding\"])}')"
+#   # Expected: Dimensions: 2048
+#
+#   # From an external IP not in the allowlist — should be blocked:
+#   curl -v http://EXTERNAL_IP/optimusdb1/embedding
+#   # Expected: 403 Forbidden
+#
+# TO ADD AN EXTERNAL IP (e.g. research workstation):
+#   Edit the embedding-ipallowlist sourceRange and kubectl apply.
 #
 # ==============================================================================
