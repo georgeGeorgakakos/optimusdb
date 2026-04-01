@@ -212,7 +212,6 @@ func (idx *Index) handleIncomingReplies() {
 }
 
 // ── Public API ────────────────────────────────────────────────────────────────
-
 // IndexDocument embeds fields, writes to sqlite-vec, and pins to IPFS.
 func (idx *Index) IndexDocument(storeName, docID string, fields map[string]string) error {
 	text := buildIndexText(fields)

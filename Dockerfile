@@ -167,10 +167,10 @@ ENV TINYLLAMA_ENDPOINT="http://127.0.0.1:8080/v1/completions" \
 
 # Expose ports
 EXPOSE 4001 4002 5001 8080 8089 9001
-
+#
 # Health check for OptimusDB
 HEALTHCHECK --interval=30s --timeout=10s --start-period=90s --retries=5 \
     CMD pgrep -f optimusdb || exit 1
-
+#
 # Start supervisor directly
 CMD ["/usr/bin/supervisord", "-n", "-c", "/etc/supervisor/conf.d/supervisord.conf"]
