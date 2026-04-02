@@ -72,6 +72,23 @@ type Index struct {
 // New creates the Index. Call WithFetcher() immediately after to enable
 // document hydration in search results.
 func New(db *sql.DB, llamaURL string, orbit *iface.OrbitDB, h host.Host, ps *pubsub.PubSub) (*Index, error) {
+	// Guard against nil pointers during early startup — OrbitDB and PubSub
+	// may not be ready yet when llama-server first becomes healthy.
+	// The background goroutine in main.go retries every 5s, so returning
+	// an error here is safe and expected during the startup window.
+	if orbit == nil || *orbit == nil {
+		return nil, fmt.Errorf("OrbitDB not initialised yet — will retry")
+	}
+	if ps == nil {
+		return nil, fmt.Errorf("PubSub not initialised yet — will retry")
+	}
+	if db == nil {
+		return nil, fmt.Errorf("SQLite DB not initialised yet — will retry")
+	}
+	if h == nil {
+		return nil, fmt.Errorf("libp2p host not initialised yet — will retry")
+	}
+
 	idx := &Index{
 		db:       db,
 		llamaURL: strings.TrimRight(llamaURL, "/"),
@@ -93,9 +110,6 @@ func New(db *sql.DB, llamaURL string, orbit *iface.OrbitDB, h host.Host, ps *pub
 
 // WithFetcher sets the DocFetcher used to hydrate document content in search
 // results. Call immediately after New() before the index receives queries.
-//
-//	semanticIdx, _ := semantic.New(...)
-//	semanticIdx.WithFetcher(knowledgeBaseDB)  // KnowledgeBaseDB implements DocFetcher
 func (idx *Index) WithFetcher(f DocFetcher) *Index {
 	idx.fetcher = f
 	return idx
@@ -151,9 +165,6 @@ func (idx *Index) joinTopics() error {
 }
 
 // handleIncomingQueries answers search queries from other nodes.
-// Peers return doc_id + score + store — no document content.
-// Document hydration happens only at the coordinator (the node that
-// initiated the Search() call), where OrbitDB stores are directly accessible.
 func (idx *Index) handleIncomingQueries() {
 	selfID := idx.host.ID().String()
 	for {
@@ -178,9 +189,6 @@ func (idx *Index) handleIncomingQueries() {
 			}
 			for i := range results {
 				results[i].SourceNode = selfID
-				// Intentionally omit Document here — peers don't serialise
-				// full documents over GossipSub (bandwidth + latency cost).
-				// The coordinator fetches content from its local replica.
 			}
 			reply := SearchReply{CorrelationID: q.CorrelationID, Results: results}
 			data, _ := json.Marshal(reply)
@@ -212,6 +220,7 @@ func (idx *Index) handleIncomingReplies() {
 }
 
 // ── Public API ────────────────────────────────────────────────────────────────
+
 // IndexDocument embeds fields, writes to sqlite-vec, and pins to IPFS.
 func (idx *Index) IndexDocument(storeName, docID string, fields map[string]string) error {
 	text := buildIndexText(fields)
@@ -234,6 +243,9 @@ func (idx *Index) IndexDocument(storeName, docID string, fields map[string]strin
 
 // BootstrapFromIPFS fetches a peer's embedding blob and inserts it locally.
 func (idx *Index) BootstrapFromIPFS(ctx context.Context, docID, ipfsCID string) error {
+	if idx.orbit == nil || *idx.orbit == nil {
+		return fmt.Errorf("OrbitDB not available")
+	}
 	coreAPI := (*idx.orbit).IPFS()
 	pth := path.New("/ipfs/" + ipfsCID)
 	node, err := coreAPI.Unixfs().Get(ctx, pth)
@@ -255,9 +267,6 @@ func (idx *Index) BootstrapFromIPFS(ctx context.Context, docID, ipfsCID string) 
 }
 
 // Search runs a hybrid local-ANN + GossipSub distributed semantic search.
-// When a DocFetcher has been registered via WithFetcher(), each result whose
-// SourceNode matches this node will have its Document field populated with
-// the full OrbitDB document content.
 func (idx *Index) Search(ctx context.Context, query string, topK int, budget time.Duration) ([]SearchResult, error) {
 	if topK <= 0 {
 		topK = DefaultTopK
@@ -305,7 +314,6 @@ func (idx *Index) Search(ctx context.Context, query string, topK int, budget tim
 	}
 	data, _ := json.Marshal(sqMsg)
 	if err := idx.searchTopic.Publish(ctx, data); err != nil {
-		// Non-fatal — return local results only, still hydrated.
 		return idx.enrichResults(ctx, rankAndTrim(local, topK), selfID), nil
 	}
 
@@ -318,7 +326,6 @@ func (idx *Index) Search(ctx context.Context, query string, topK int, budget tim
 		case peerResults := <-replyCh:
 			all = append(all, peerResults...)
 		case <-timer.C:
-			// 4. Merge, deduplicate, rank, then hydrate local docs.
 			ranked := rankAndTrim(all, topK)
 			return idx.enrichResults(ctx, ranked, selfID), nil
 		case <-ctx.Done():
@@ -351,7 +358,7 @@ func (idx *Index) embed(text string) ([]float32, error) {
 }
 
 func (idx *Index) pinToIPFS(blob []byte) string {
-	if idx.orbit == nil {
+	if idx.orbit == nil || *idx.orbit == nil {
 		return ""
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
