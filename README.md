@@ -47,6 +47,7 @@ Key goals:
 - [Semantic Search Engine](docs/OptimusDB_SemanticSearch.md)
 - [Embeddings as a Service](docs/OptimusDB_Embeddings.md)
 - [Embeddings and Semantic Search scenarios](docs/OptimusDB_Semantic_Embedings_Examples.md)
+- [Semantic Search over TOSCA 2.0 Artifacts](docs/OptimusDB_SemanticSearchoverTOSCA.md)
 - [RDBMS vs CRUD Data Store explanation](docs/OptimusDB_RDBMSvsCRUD.md)
 - [Leader Election Mechanism](docs/OptimusDB_LeaderElection.md)
 - [Election versus Discovery Peer Mechanism](docs/OptimusDB_DiscoveryVsElection.md)
