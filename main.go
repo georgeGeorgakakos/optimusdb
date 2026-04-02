@@ -543,6 +543,20 @@ func main() {
 			default:
 			}
 
+			// FIX: app.GlobalKBSQLite is set by InitPeer → InitSQLite.
+			// The local rdbms variable's DB field is never populated —
+			// only the global is. Guard here so semantic.New() never
+			// receives a nil *sql.DB.
+			if app.GlobalKBSQLite == nil || app.GlobalKBSQLite.DB == nil {
+				logger.Info("[SEMANTIC] SQLite not ready yet, retrying in %s...", retryDelay)
+				select {
+				case <-termCtx.Done():
+					return
+				case <-time.After(retryDelay):
+				}
+				continue
+			}
+
 			// Poll llama-server /health — same check EMS uses for broker readiness
 			resp, err := http.Get(url + "/health")
 			if err != nil || resp.StatusCode != 200 {
@@ -571,7 +585,7 @@ func main() {
 					}
 				}()
 				semanticIdx, semanticErr := semantic.New(
-					rdbms.DB,              // *sql.DB — existing KnowledgeBaseSQLite database
+					app.GlobalKBSQLite.DB, // FIX: use GlobalKBSQLite — rdbms.DB is always nil
 					url,                   // base URL of llama-server, e.g. "http://localhost:8080"
 					knowledgeBaseDB.Orbit, // *iface.OrbitDB — for IPFS Unixfs().Add()
 					hostMain,              // host.Host
