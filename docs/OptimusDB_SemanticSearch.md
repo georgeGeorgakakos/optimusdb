@@ -1,6 +1,8 @@
 # Semantic Search for OptimusDB
 
-Distributed semantic search over all OrbitDB document stores, using your existing `llama-server` for embeddings, `sqlite-vec` for local ANN, and GossipSub for peer fan-out.
+Distributed semantic search over all OrbitDB document stores, using the existing
+`llama-server` for embeddings, `sqlite-vec` for local ANN, and GossipSub for peer
+fan-out.
 
 ---
 
@@ -11,8 +13,8 @@ Write path (non-blocking goroutine)
 ────────────────────────────────────────────────────────
 crudPutDocStoreRev ──► go IndexDocument(store, docID, fields)
 │
-├─► POST /embedding        llama-server (existing, add --embedding flag)
-│         └─► float32[4096] vector
+├─► POST /embedding        llama-server (--embedding flag required)
+│         └─► float32[2048] vector
 │
 ├─► INSERT OR REPLACE       sqlite-vec (vec_embeddings table)
 │
@@ -36,7 +38,7 @@ Bootstrap path (peer replication, skip inference)
 ────────────────────────────────────────────────────────
 POST /api/v1/semantic/bootstrap { doc_id, ipfs_cid }
 └─► Unixfs().Get()               fetch raw float32 blob from IPFS
-└─► sqlite-vec upsert            no llama-server call needed
+└─► sqlite-vec upsert        no llama-server call needed
 ```
 
 ---
@@ -46,11 +48,13 @@ POST /api/v1/semantic/bootstrap { doc_id, ipfs_cid }
 | Decision | Choice | Reason |
 |---|---|---|
 | Embedding source | Existing `llama-server` `/embedding` route | Already running via supervisord — zero new processes |
+| Vector dimensions | 2048 | TinyLlama-1.1B-Chat produces 2048-dim embeddings (confirmed) |
 | Vector storage (local) | `sqlite-vec` virtual table in `rdbms.DB` | Same `*sql.DB` as rest of OptimusDB — no extra file |
 | Vector storage (remote) | IPFS blob via `(*Orbit).IPFS().Unixfs().Add()` | Already used in `service.go:1646` — consistent API |
 | Distributed search | GossipSub topic pair on `knowledgeBaseDB.PubSub` | Reuses the IPFS node's single pubsub — no double-instance conflict |
 | Write path | Non-blocking goroutine | `crudPutDocStoreRev` returns immediately |
 | Import boundary | `SemanticIdx interface{}` on `KnowledgeBaseDB` | Avoids `app → semantic → app` import cycle |
+| llama-server binding | `--host 0.0.0.0` | Required for Traefik ClusterIP service routing — `127.0.0.1` blocks external traffic |
 
 ---
 
@@ -59,8 +63,8 @@ POST /api/v1/semantic/bootstrap { doc_id, ipfs_cid }
 ### 1. Insert three energy asset documents
 
 ```bash
-curl -X POST http://optimusdb-agent-1:9091/api/v1/crudput \
--H 'Content-Type: application/json' \
+curl -s -X POST http://193.225.250.240/optimusdb1/swarmkb/command \
+-H "Content-Type: application/json" \
 -d '{
 "method": {"cmd": "crudput", "argcnt": 1},
 "dstype": "dsswres",
@@ -71,25 +75,47 @@ curl -X POST http://optimusdb-agent-1:9091/api/v1/crudput \
 "type": "solar",
 "status": "operational",
 "capacity_mw": 500,
-"location": { "country": "Greece", "region": "Attica" },
+"location": {"country": "Greece", "region": "Attica"},
 "tags": ["renewable", "solar", "high-capacity"]
-},
+}
+]
+}'
+```
+
+```bash
+curl -s -X POST http://193.225.250.240/optimusdb2/swarmkb/command \
+-H "Content-Type: application/json" \
+-d '{
+"method": {"cmd": "crudput", "argcnt": 1},
+"dstype": "dsswres",
+"criteria": [
 {
 "_id": "wind_thrace_007",
 "name": "Thrace Wind Park",
 "type": "wind",
 "status": "operational",
 "capacity_mw": 800,
-"location": { "country": "Greece", "region": "Thrace" },
+"location": {"country": "Greece", "region": "Thrace"},
 "tags": ["renewable", "wind", "offshore-candidate"]
-},
+}
+]
+}'
+```
+
+```bash
+curl -s -X POST http://193.225.250.240/optimusdb3/swarmkb/command \
+-H "Content-Type: application/json" \
+-d '{
+"method": {"cmd": "crudput", "argcnt": 1},
+"dstype": "dsswres",
+"criteria": [
 {
 "_id": "solar_crete_012",
 "name": "Crete Solar Installation",
 "type": "solar",
 "status": "maintenance",
 "capacity_mw": 120,
-"location": { "country": "Greece", "region": "Crete" },
+"location": {"country": "Greece", "region": "Crete"},
 "tags": ["solar", "island-grid"]
 }
 ]
@@ -101,34 +127,30 @@ After each successful insert, `crudPutDocStoreRev` fires a goroutine:
 ```
 "Athens Solar Farm solar operational Greece Attica renewable solar high-capacity"
 │
-├─► POST /embedding  →  float32[4096]
+├─► POST /embedding  →  float32[2048]
 ├─► sqlite-vec upsert
 └─► IPFS pin  →  QmCid stored in vec_meta
 ```
 
-The `crudput` HTTP response returns immediately. All three documents are indexed concurrently in the background.
+The `crudput` HTTP response returns immediately. All three documents are indexed
+concurrently in the background.
 
 ---
 
-### 2. Search from the OptimusDDC UI
+### 2. Search
 
-The user types into the Semantic Search page search bar:
-
-```
-solar farm high capacity operational
-```
-
-The OptimusDDC frontend calls:
-
-```
-GET /api/v1/semantic/search?q=solar+farm+high+capacity+operational&top_k=5&budget_ms=1500
+```bash
+curl -s "http://193.225.250.240/optimusdb1/swarmkb/api/v1/semantic/search\
+?q=solar+farm+high+capacity+operational&top_k=5&budget_ms=1500" \
+| python3 -m json.tool
 ```
 
 ---
 
 ### 3. Response
 
-Each result includes `document` — the full OrbitDB document content, fetched via `DocumentStore.Get()` after the ANN ranking is complete.
+Each result includes `document` — the full OrbitDB document content, fetched via
+`DocumentStore.Get()` after the ANN ranking is complete.
 
 ```json
 {
@@ -145,39 +167,39 @@ Each result includes `document` — the full OrbitDB document content, fetched v
 "type":        "solar",
 "status":      "operational",
 "capacity_mw": 500,
-"location": {
-"country": "Greece",
-"region":  "Attica"
-},
-"tags": ["renewable", "solar", "high-capacity"]
+"location":    {"country": "Greece", "region": "Attica"},
+"tags":        ["renewable", "solar", "high-capacity"]
 }
 },
 {
 "doc_id":      "wind_thrace_007",
 "score":       0.81,
-"source_node": "QmNode1xYzAbCdEf...",
+"source_node": "QmNode2xYzAbCdEf...",
 "store":       "dsswres",
 "document": {
 "name":        "Thrace Wind Park",
 "type":        "wind",
 "status":      "operational",
 "capacity_mw": 800,
-"location": {
-"country": "Greece",
-"region":  "Thrace"
-},
-"tags": ["renewable", "wind", "offshore-candidate"]
+"location":    {"country": "Greece", "region": "Thrace"},
+"tags":        ["renewable", "wind", "offshore-candidate"]
 }
 }
 ]
 }
 ```
 
-`solar_crete_012` does not appear — its embedding ("Crete Solar Installation solar maintenance island-grid") is semantically distant from "high capacity operational". The cosine similarity falls below both returned results and it is trimmed from the top-K.
+`solar_crete_012` does not appear — its embedding
+("Crete Solar Installation solar maintenance island-grid") is semantically distant
+from "high capacity operational". The cosine similarity falls below both returned
+results and it is trimmed from the top-K.
 
 > **`document` field rules:**
-> - Present when `source_node` matches the coordinator node (local OrbitDB lookup via `DocumentStore.Get()`).
-> - `null` for results from remote peers — document content is not serialised over GossipSub to keep reply payloads small. The coordinator can still resolve remote docs if it holds a replica of the same OrbitDB store.
+> - Present when `source_node` matches the coordinator node (local OrbitDB lookup
+>   via `DocumentStore.Get()`).
+> - `null` for results from remote peers — document content is not serialised over
+>   GossipSub to keep reply payloads small. The coordinator can still resolve remote
+>   docs if it holds a replica of the same OrbitDB store.
 > - Internal fields `_id` and `_created_at` are stripped from the document payload.
 
 ---
@@ -185,14 +207,14 @@ Each result includes `document` — the full OrbitDB document content, fetched v
 ### 4. Peer merging (multi-node cluster)
 
 ```
-coordinator (agent-1)
+coordinator (node 1)
 │
 ├─► local ANN  →  [solar_attica_001: 0.94, wind_thrace_007: 0.81]
 │
-└─► GossipSub broadcast  →  agent-2, agent-3, agent-4 ...
+└─► GossipSub broadcast  →  node 2, node 3
 │
-├─► agent-2 local ANN  →  [wind_thrace_007: 0.79]   (replica)
-└─► agent-3 local ANN  →  []                         (no matching docs)
+├─► node 2 local ANN  →  [wind_thrace_007: 0.79]   (replica)
+└─► node 3 local ANN  →  []                         (no matching docs)
 
 merge: deduplicate wind_thrace_007 (keep score 0.81 > 0.79), trim to top_k=5
 final: [solar_attica_001: 0.94, wind_thrace_007: 0.81]
@@ -202,7 +224,8 @@ final: [solar_attica_001: 0.94, wind_thrace_007: 0.81]
 
 ## Integration changes
 
-Four surgical edits across three existing files. One new package (`semantic/`) drops in alongside `chat/`, `contextualmetadata/`.
+Four surgical edits across three existing files. One new package (`semantic/`) drops
+in alongside `chat/`, `contextualmetadata/`.
 
 ### §1 — `main.go`: load sqlite-vec + init SemanticIndex
 
@@ -257,7 +280,6 @@ ps,                         // *pubsub.PubSub
 if semanticErr != nil {
 logger.Warn("[SEMANTIC] Index unavailable: %v", semanticErr)
 } else {
-// Wire the fetcher — enables document content in search results.
 semanticIdx.WithFetcher(&knowledgeBaseDB)
 logger.Info("[SEMANTIC] Semantic search initialized (llama: %s)", llamaURL)
 knowledgeBaseDB.SemanticIdx = semanticIdx
@@ -266,9 +288,11 @@ knowledgeBaseDB.SemanticIdx = semanticIdx
 
 ---
 
-### §2b — `app/app.go`: add `FetchDocument` method
+### §2 — `app/app.go`: add `FetchDocument` method
 
-This implements `semantic.DocFetcher` — the interface that lets `semantic.Index` fetch full document content from OrbitDB after ranking, without creating an import cycle. Add alongside the other KB interface methods:
+This implements `semantic.DocFetcher` — the interface that lets `semantic.Index`
+fetch full document content from OrbitDB after ranking, without creating an import
+cycle. Add alongside the other KB interface methods:
 
 ```go
 func (kb *KnowledgeBaseDB) FetchDocument(ctx context.Context, storeName, docID string) (map[string]interface{}, error) {
@@ -286,8 +310,6 @@ store = *kb.KBMetadata
 case "kbdata":
 if kb.KBdata == nil { return nil, fmt.Errorf("store not init") }
 store = *kb.KBdata
-// ... add remaining stores: tosca_imported, tosca_adt, tosca_capacities,
-//     tosca_deploymentplan, tosca_eventhistory, whoiswho
 default:
 return nil, fmt.Errorf("unknown store: %s", storeName)
 }
@@ -302,10 +324,6 @@ return m, nil
 return nil, fmt.Errorf("unexpected doc type")
 }
 ```
-
-The full switch with all stores is in `semantic/app_changes.go.txt`.
-
-
 
 **Add one field to `KnowledgeBaseDB`** (after `Interceptor`):
 
@@ -398,9 +416,14 @@ logger.Info("[SEMANTIC] Routes registered at /api/v1/semantic")
 
 ---
 
-### §5 — `Dockerfile`: enable the `/embedding` route
+### §5 — `Dockerfile`: enable the `/embedding` route and bind to `0.0.0.0`
 
-The `llama-server` ships with embedding support built in. Add `--embedding` to the startup command in the supervisord config section of the Dockerfile:
+Two changes are required in the supervisord config section:
+
+1. Add `--embedding` so llama-server activates the `/embedding` endpoint
+2. Change `--host` from `127.0.0.1` to `0.0.0.0` so Traefik can reach it via the
+ClusterIP service — `127.0.0.1` only accepts loopback connections and causes
+a 502 Bad Gateway when Traefik tries to route `/optimusdbN/embedding` to the pod
 
 ```dockerfile
 # BEFORE:
@@ -409,10 +432,14 @@ command=/usr/local/bin/llama-server -m /models/tinyllama-1.1b-chat-v1.0.Q4_K_M.g
 
 # AFTER:
 command=/usr/local/bin/llama-server -m /models/tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf \
--c 2048 --host 127.0.0.1 --port 8080 --n-gpu-layers 0 --embedding
+-c 2048 --host 0.0.0.0 --port 8080 --n-gpu-layers 0 --embedding
 ```
 
-For the multi-node compose setup, add `--embedding` to both `COORDINATOR_TINYLLAMA_TEMPLATE` and `FOLLOWER_TINYLLAMA_TEMPLATE` in `repoScript/Energy/generate-docker-compose.py`.
+> **Note:** The `TINYLLAMA_ENDPOINT` and `TINYLLAMA_EMBEDDING_ENDPOINT` environment
+> variables inside the container still use `127.0.0.1` — that is correct. Those are
+> used by the Go application calling llama-server from inside the same pod (loopback).
+> Only the `--host` flag on llama-server itself needs to be `0.0.0.0` so that
+> external traffic routed by Traefik through the ClusterIP service can reach it.
 
 ---
 
@@ -422,7 +449,8 @@ For the multi-node compose setup, add `--embedding` to both `COORDINATOR_TINYLLA
 go get github.com/asg017/sqlite-vec-go-bindings/cgo
 ```
 
-The C library ships with the Go module via CGo — no separate shared library install needed.
+The C library ships with the Go module via CGo — no separate shared library install
+needed.
 
 ---
 
@@ -441,58 +469,20 @@ Search all indexed documents using natural language.
 **Example:**
 
 ```bash
-curl "http://localhost:9091/api/v1/semantic/search?\
-q=solar+farm+high+capacity+operational&top_k=5&budget_ms=1500"
-```
-
-**Response:**
-
-```json
-{
-"query":   "solar farm high capacity operational",
-"count":   2,
-"results": [
-{
-"doc_id":      "solar_attica_001",
-"score":       0.94,
-"source_node": "QmNode1...",
-"store":       "dsswres",
-"document": {
-"name": "Athens Solar Farm",
-"type": "solar",
-"status": "operational",
-"capacity_mw": 500,
-"location": { "country": "Greece", "region": "Attica" },
-"tags": ["renewable", "solar", "high-capacity"]
-}
-},
-{
-"doc_id":      "wind_thrace_007",
-"score":       0.81,
-"source_node": "QmNode1...",
-"store":       "dsswres",
-"document": {
-"name": "Thrace Wind Park",
-"type": "wind",
-"status": "operational",
-"capacity_mw": 800,
-"location": { "country": "Greece", "region": "Thrace" },
-"tags": ["renewable", "wind", "offshore-candidate"]
-}
-}
-]
-}
+curl -s "http://193.225.250.240/optimusdb1/swarmkb/api/v1/semantic/search\
+?q=solar+farm+high+capacity+operational&top_k=5&budget_ms=1500"
 ```
 
 ---
 
 ### `POST /api/v1/semantic/index`
 
-Manually (re-)index a document. Useful after schema changes or for documents inserted before semantic search was enabled.
+Manually (re-)index a document. Useful after schema changes or for documents
+inserted before semantic search was enabled.
 
 ```bash
-curl -X POST http://localhost:9091/api/v1/semantic/index \
--H 'Content-Type: application/json' \
+curl -s -X POST http://193.225.250.240/optimusdb1/swarmkb/api/v1/semantic/index \
+-H "Content-Type: application/json" \
 -d '{
 "store":  "dsswres",
 "doc_id": "solar_attica_001",
@@ -510,12 +500,14 @@ curl -X POST http://localhost:9091/api/v1/semantic/index \
 
 ### `POST /api/v1/semantic/bootstrap`
 
-Fetch a pre-computed embedding from IPFS instead of re-running `llama-server` inference. Called automatically when a node replicates a document from a peer and the CID is available in `vec_meta`.
+Fetch a pre-computed embedding from IPFS instead of re-running `llama-server`
+inference. Called automatically when a node replicates a document from a peer
+and the CID is available in `vec_meta`.
 
 ```bash
-curl -X POST http://localhost:9091/api/v1/semantic/bootstrap \
--H 'Content-Type: application/json' \
--d '{ "doc_id": "solar_attica_001", "ipfs_cid": "QmXyz..." }'
+curl -s -X POST http://193.225.250.240/optimusdb1/swarmkb/api/v1/semantic/bootstrap \
+-H "Content-Type: application/json" \
+-d '{"doc_id": "solar_attica_001", "ipfs_cid": "QmXyz..."}'
 ```
 
 ---
@@ -526,9 +518,10 @@ Two tables are added to the existing `rdbms.DB` database on first startup:
 
 ```sql
 -- ANN index (sqlite-vec virtual table)
+-- Dimensions: 2048 (TinyLlama-1.1B-Chat)
 CREATE VIRTUAL TABLE IF NOT EXISTS vec_embeddings USING vec0(
 doc_id    TEXT PRIMARY KEY,
-embedding float[4096]
+embedding float[2048]
 );
 
 -- IPFS CID mapping for peer bootstrap
@@ -550,28 +543,33 @@ source_text TEXT
 | `/optimusdb/semantic/search/1.0.0` | coordinator → all peers | `SearchQuery` — correlation ID, query vector, top_k, deadline |
 | `/optimusdb/semantic/results/1.0.0` | each peer → coordinator | `SearchReply` — correlation ID, top-K results |
 
-Both topics use `knowledgeBaseDB.PubSub` — the same single GossipSub instance used by the election controller. No second pubsub instance is created on the host.
+Both topics use `knowledgeBaseDB.PubSub` — the same single GossipSub instance used
+by the election controller. No second pubsub instance is created on the host.
 
 ---
 
 ## Verification
 
 ```bash
-# 1. Confirm llama-server /embedding is live
-curl -s http://localhost:8080/embedding \
--H 'Content-Type: application/json' \
--d '{"content": "test"}' | python3 -c "import sys,json; d=json.load(sys.stdin); print(len(d['embedding']), 'dims')"
-# 4096 dims
+# 1. Confirm llama-server /embedding is live and returns 2048 dims
+curl -s -X POST http://193.225.250.240/optimusdb1/embedding \
+-H "Content-Type: application/json" \
+-d '{"content": "test"}' | python3 -c \
+"import sys,json; d=json.load(sys.stdin); print(len(d['embedding']), 'dims')"
+# Expected: 2048 dims
 
 # 2. Insert a document (triggers background indexing)
-curl -X POST http://localhost:9091/api/v1/crudput \
--H 'Content-Type: application/json' \
--d '{"method":{"cmd":"crudput","argcnt":1},"dstype":"dsswres","criteria":[
-{"_id":"test_001","name":"Test Solar Farm","type":"solar","status":"operational"}
-]}'
+curl -s -X POST http://193.225.250.240/optimusdb1/swarmkb/command \
+-H "Content-Type: application/json" \
+-d '{
+"method": {"cmd": "crudput", "argcnt": 1},
+"dstype": "dsswres",
+"criteria": [{"_id":"test_001","name":"Test Solar Farm","type":"solar","status":"operational"}]
+}'
 
 # 3. Wait ~2s for indexing goroutine, then search
-curl "http://localhost:9091/api/v1/semantic/search?q=solar+operational&top_k=3"
+curl -s "http://193.225.250.240/optimusdb1/swarmkb/api/v1/semantic/search\
+?q=solar+operational&top_k=3"
 ```
 
 ---
@@ -579,7 +577,7 @@ curl "http://localhost:9091/api/v1/semantic/search?q=solar+operational&top_k=3"
 ## File map
 
 ```
-optimusdb-lsa/
+optimusdb/
 ├── semantic/
 │   ├── semantic_search.go    ← Index struct, embed(), localANN(), GossipSub, IPFS pin
 │   ├── doc_fetch.go          ← DocFetcher interface, enrichResults(), SearchResult.Document
@@ -590,5 +588,5 @@ optimusdb-lsa/
 │   └── service.go            ← +goroutine in crudPutDocStoreRev, +docFieldsToStringMap()
 ├── api/
 │   └── http.go               ← +3 routes in RegisterMetadataRoutes
-└── Dockerfile                ← +--embedding flag to llama-server command
+└── Dockerfile                ← --host 0.0.0.0 --embedding on llama-server command
 ```
