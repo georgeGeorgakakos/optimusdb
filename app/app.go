@@ -10,7 +10,6 @@ import (
 	"fmt"
 	"github.com/ipfs/kubo/core"
 	pubsub "github.com/libp2p/go-libp2p-pubsub"
-	"github.com/mattn/go-sqlite3"
 	"optimusdb/config"
 	"optimusdb/datamodel"
 	"optimusdb/logger"
@@ -258,10 +257,6 @@ type LoggerSQLite struct {
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-// sqlite3VecDriverOnce ensures the "sqlite3_vec_kb" driver is registered exactly once.
-// sql.Register panics if called twice with the same driver name, so we guard with sync.Once.
-var sqlite3VecDriverOnce sync.Once
-
 //	SQLite instantiation
 //
 // InitSQLite initializes the SQLite database and ensures tables exist
@@ -269,34 +264,9 @@ func InitSQLite(dbPath string) (*KnowledgeBaseSQLite, error) {
 
 	logger.Info("[INFO] Initializing RDBMS KnowledgeBase : %v", dbPath)
 	//GlobalLoggerDB.AddToOptimusLog("INFO", fmt.Sprintf("Initializing RDBMS KnowledgeBase : %v"), runtime.GOOS)
-
-	// Open SQLite Database.
-	// We register a custom driver "sqlite3_vec_kb" that enables SQLite's
-	// load_extension mechanism via a ConnectHook. This is required for the
-	// semantic search package to call SELECT load_extension('/usr/lib/sqlite-vec/vec0').
-	//
-	// The standard "sqlite3" driver does not enable load_extension even with
-	// the _allow_load_extension=1 DSN parameter — the C-level flag must be set
-	// per-connection via sqlite3_enable_load_extension(), which the hook does.
-	//
-	// sqlite3VecDriverOnce guards against panic from duplicate sql.Register calls
-	// if InitSQLite is ever called more than once in the process lifetime.
-	sqlite3VecDriverOnce.Do(func() {
-		sql.Register("sqlite3_vec_kb", &sqlite3.SQLiteDriver{
-			ConnectHook: func(conn *sqlite3.SQLiteConn) error {
-				// sqlite3_enable_load_extension(db, 1) — required for load_extension()
-				_, err := conn.Exec("PRAGMA trusted_schema=ON", nil)
-				if err != nil {
-					// Non-fatal: log and continue; load_extension will fail later
-					// with a clearer error if the pragma didn't help.
-					logger.Warn("[SQLITE] trusted_schema pragma failed: %v", err)
-				}
-				return conn.LoadExtension("", "")
-			},
-		})
-	})
-
-	db, err := sql.Open("sqlite3_vec_kb", dbPath+"?_allow_load_extension=1")
+	// Open SQLite Database
+	// _allow_load_extension=1 enables SELECT load_extension() used by semantic search (vec0)
+	db, err := sql.Open("sqlite3", dbPath+"?_allow_load_extension=1")
 	if err != nil {
 		logger.Error("[ERROR] Failed to connect to SQLite database: %v", err)
 		//GlobalLoggerDB.AddToOptimusLog("ERROR", fmt.Sprintf("Failed to connect to SQLite database: %v", err), runtime.GOOS)
@@ -1498,6 +1468,7 @@ func (db *KnowledgeBaseDB) publishEvent(ev Event) {
 	// Use the default topic set when you created the client (cfg.Topic)
 	_ = db.MQEMS.PublishJSON("", b)
 }
+
 func (kb *LoggerSQLite) createEMSEventsTable() error {
 	table := `
 	CREATE TABLE IF NOT EXISTS ems_events (
