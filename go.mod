@@ -18,7 +18,7 @@ require (
 	github.com/libp2p/go-libp2p-pubsub v0.9.3
 	github.com/lukesampson/figlet v0.0.0-20190211215653-8a3ef4a6ac42
 	github.com/mackerelio/go-osstat v0.2.5
-	github.com/mattn/go-sqlite3 v1.14.24
+	github.com/mattn/go-sqlite3 v1.14.39
 	github.com/mk6i/mkdb v0.0.0-20240227115223-8dc2ed2e21f3
 	github.com/multiformats/go-multiaddr v0.9.0
 	github.com/multiformats/go-multihash v0.2.1
