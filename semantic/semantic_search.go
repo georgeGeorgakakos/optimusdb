@@ -118,13 +118,11 @@ func (idx *Index) WithFetcher(f DocFetcher) *Index {
 // ── Schema ────────────────────────────────────────────────────────────────────
 
 func (idx *Index) migrate() error {
-	// Load vec0 as a SQLite loadable extension.
-	// Requires _allow_load_extension=1 in the DSN (set in app/app.go InitSQLite)
-	// and /usr/lib/sqlite-vec/vec0.so present in the image (copied in Dockerfile).
-	if _, err := idx.db.Exec(`SELECT load_extension('/usr/lib/sqlite-vec/vec0')`); err != nil {
-		return fmt.Errorf("load vec0 extension (/usr/lib/sqlite-vec/vec0.so missing?): %w", err)
-	}
-
+	// vec0 extension is pre-loaded by the sqlite3_vec_kb driver registered
+	// in app/sqlite_ext_linux.go via SQLiteDriver.Extensions field.
+	// The driver calls sqlite3_load_extension() at the C level on every new
+	// connection — no manual SELECT load_extension() call needed here.
+	// vec0.so is at /usr/lib/sqlite-vec/vec0.so in the container image.
 	_, err := idx.db.Exec(fmt.Sprintf(`
 		CREATE VIRTUAL TABLE IF NOT EXISTS vec_embeddings USING vec0(
 			doc_id    TEXT PRIMARY KEY,
@@ -165,6 +163,9 @@ func (idx *Index) joinTopics() error {
 }
 
 // handleIncomingQueries answers search queries from other nodes.
+// Peers return doc_id + score + store — no document content.
+// Document hydration happens only at the coordinator (the node that
+// initiated the Search() call), where OrbitDB stores are directly accessible.
 func (idx *Index) handleIncomingQueries() {
 	selfID := idx.host.ID().String()
 	for {
@@ -189,6 +190,9 @@ func (idx *Index) handleIncomingQueries() {
 			}
 			for i := range results {
 				results[i].SourceNode = selfID
+				// Intentionally omit Document here — peers don't serialise
+				// full documents over GossipSub (bandwidth + latency cost).
+				// The coordinator fetches content from its local replica.
 			}
 			reply := SearchReply{CorrelationID: q.CorrelationID, Results: results}
 			data, _ := json.Marshal(reply)
@@ -267,6 +271,9 @@ func (idx *Index) BootstrapFromIPFS(ctx context.Context, docID, ipfsCID string) 
 }
 
 // Search runs a hybrid local-ANN + GossipSub distributed semantic search.
+// When a DocFetcher has been registered via WithFetcher(), each result whose
+// SourceNode matches this node will have its Document field populated with
+// the full OrbitDB document content.
 func (idx *Index) Search(ctx context.Context, query string, topK int, budget time.Duration) ([]SearchResult, error) {
 	if topK <= 0 {
 		topK = DefaultTopK
@@ -314,6 +321,7 @@ func (idx *Index) Search(ctx context.Context, query string, topK int, budget tim
 	}
 	data, _ := json.Marshal(sqMsg)
 	if err := idx.searchTopic.Publish(ctx, data); err != nil {
+		// Non-fatal — return local results only, still hydrated.
 		return idx.enrichResults(ctx, rankAndTrim(local, topK), selfID), nil
 	}
 
@@ -326,6 +334,7 @@ func (idx *Index) Search(ctx context.Context, query string, topK int, budget tim
 		case peerResults := <-replyCh:
 			all = append(all, peerResults...)
 		case <-timer.C:
+			// 4. Merge, deduplicate, rank, then hydrate local docs.
 			ranked := rankAndTrim(all, topK)
 			return idx.enrichResults(ctx, ranked, selfID), nil
 		case <-ctx.Done():
