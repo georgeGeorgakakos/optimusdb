@@ -118,11 +118,13 @@ func (idx *Index) WithFetcher(f DocFetcher) *Index {
 // ── Schema ────────────────────────────────────────────────────────────────────
 
 func (idx *Index) migrate() error {
-	// vec0 extension is pre-loaded by the sqlite3_vec_kb driver registered
-	// in app/sqlite_ext_linux.go via SQLiteDriver.Extensions field.
-	// The driver calls sqlite3_load_extension() at the C level on every new
-	// connection — no manual SELECT load_extension() call needed here.
-	// vec0.so is at /usr/lib/sqlite-vec/vec0.so in the container image.
+	// Load vec0 as a SQLite loadable extension.
+	// Requires _allow_load_extension=1 in the DSN (set in app/app.go InitSQLite)
+	// and /usr/lib/sqlite-vec/vec0.so present in the image (copied in Dockerfile).
+	if _, err := idx.db.Exec(`SELECT load_extension('/usr/lib/sqlite-vec/vec0')`); err != nil {
+		return fmt.Errorf("load vec0 extension (/usr/lib/sqlite-vec/vec0.so missing?): %w", err)
+	}
+
 	_, err := idx.db.Exec(fmt.Sprintf(`
 		CREATE VIRTUAL TABLE IF NOT EXISTS vec_embeddings USING vec0(
 			doc_id    TEXT PRIMARY KEY,

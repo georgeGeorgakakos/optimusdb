@@ -272,7 +272,7 @@ func InitSQLite(dbPath string) (*KnowledgeBaseSQLite, error) {
 	// parameter effective. The vec0.so extension is loaded later in semantic_search.go
 	// via SELECT load_extension('/usr/lib/sqlite-vec/vec0') during semantic index init.
 	//db, err := sql.Open("sqlite3", dbPath+"?_allow_load_extension=1")
-	db, err := sql.Open("sqlite3_vec_kb", dbPath+"?_allow_load_extension=1")
+	db, err := sql.Open("sqlite3", dbPath)
 	if err != nil {
 		logger.Error("[ERROR] Failed to connect to SQLite database: %v", err)
 		//GlobalLoggerDB.AddToOptimusLog("ERROR", fmt.Sprintf("Failed to connect to SQLite database: %v", err), runtime.GOOS)
@@ -283,7 +283,7 @@ func InitSQLite(dbPath string) (*KnowledgeBaseSQLite, error) {
 	// semantic search. The SQLiteDriver.Extensions field in sqlite_ext_linux.go loads
 	// vec0 per-connection — with pool size 1 there is only ever one connection so
 	// vec0 is guaranteed loaded for the CREATE VIRTUAL TABLE vec0 call in migrate().
-	db.SetMaxOpenConns(1)
+	//db.SetMaxOpenConns(1) -- crashing with this////
 
 	// Create the KnowledgeBaseSQLite instance
 	GlobalKBSQLite = &KnowledgeBaseSQLite{DB: db}
