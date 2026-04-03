@@ -264,8 +264,13 @@ func InitSQLite(dbPath string) (*KnowledgeBaseSQLite, error) {
 
 	logger.Info("[INFO] Initializing RDBMS KnowledgeBase : %v", dbPath)
 	//GlobalLoggerDB.AddToOptimusLog("INFO", fmt.Sprintf("Initializing RDBMS KnowledgeBase : %v"), runtime.GOOS)
-	// Open SQLite Database
-	// _allow_load_extension=1 enables SELECT load_extension() used by semantic search (vec0)
+
+	// Open SQLite Database.
+	// _allow_load_extension=1 enables SELECT load_extension() used by semantic search (vec0).
+	// This works because the Dockerfile builds with -tags allow_load_extension which compiles
+	// SQLITE_ENABLE_LOAD_EXTENSION into the mattn/go-sqlite3 CGO layer, making the DSN
+	// parameter effective. The vec0.so extension is loaded later in semantic_search.go
+	// via SELECT load_extension('/usr/lib/sqlite-vec/vec0') during semantic index init.
 	db, err := sql.Open("sqlite3", dbPath+"?_allow_load_extension=1")
 	if err != nil {
 		logger.Error("[ERROR] Failed to connect to SQLite database: %v", err)
