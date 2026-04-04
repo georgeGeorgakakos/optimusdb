@@ -1,6 +1,6 @@
 # Semantic Search for OptimusDB
 
-Distributed semantic search over all OrbitDB document stores, using the existing
+Decentralized semantic search over all document stores, using the existing
 `llama-server` for embeddings, `sqlite-vec` for local ANN, and GossipSub for peer
 fan-out.
 
@@ -38,7 +38,7 @@ Bootstrap path (peer replication, skip inference)
 ────────────────────────────────────────────────────────
 POST /api/v1/semantic/bootstrap { doc_id, ipfs_cid }
 └─► Unixfs().Get()               fetch raw float32 blob from IPFS
-└─► sqlite-vec upsert        no llama-server call needed
+└─► sqlite-vec upsert            no llama-server call needed
 ```
 
 ---
@@ -50,11 +50,10 @@ POST /api/v1/semantic/bootstrap { doc_id, ipfs_cid }
 | Embedding source | Existing `llama-server` `/embedding` route | Already running via supervisord — zero new processes |
 | Vector dimensions | 2048 | TinyLlama-1.1B-Chat produces 2048-dim embeddings (confirmed) |
 | Vector storage (local) | `sqlite-vec` virtual table in `rdbms.DB` | Same `*sql.DB` as rest of OptimusDB — no extra file |
-| Vector storage (remote) | IPFS blob via `(*Orbit).IPFS().Unixfs().Add()` | Already used in `service.go:1646` — consistent API |
+| Vector storage (remote) | IPFS blob via `(*Orbit).IPFS().Unixfs().Add()` | Already used in `service.go` — consistent API |
 | Distributed search | GossipSub topic pair on `knowledgeBaseDB.PubSub` | Reuses the IPFS node's single pubsub — no double-instance conflict |
 | Write path | Non-blocking goroutine | `crudPutDocStoreRev` returns immediately |
 | Import boundary | `SemanticIdx interface{}` on `KnowledgeBaseDB` | Avoids `app → semantic → app` import cycle |
-| llama-server binding | `--host 0.0.0.0` | Required for Traefik ClusterIP service routing — `127.0.0.1` blocks external traffic |
 
 ---
 
@@ -68,8 +67,7 @@ curl -s -X POST http://193.225.250.240/optimusdb1/swarmkb/command \
 -d '{
 "method": {"cmd": "crudput", "argcnt": 1},
 "dstype": "dsswres",
-"criteria": [
-{
+"criteria": [{
 "_id": "solar_attica_001",
 "name": "Athens Solar Farm",
 "type": "solar",
@@ -77,8 +75,7 @@ curl -s -X POST http://193.225.250.240/optimusdb1/swarmkb/command \
 "capacity_mw": 500,
 "location": {"country": "Greece", "region": "Attica"},
 "tags": ["renewable", "solar", "high-capacity"]
-}
-]
+}]
 }'
 ```
 
@@ -88,8 +85,7 @@ curl -s -X POST http://193.225.250.240/optimusdb2/swarmkb/command \
 -d '{
 "method": {"cmd": "crudput", "argcnt": 1},
 "dstype": "dsswres",
-"criteria": [
-{
+"criteria": [{
 "_id": "wind_thrace_007",
 "name": "Thrace Wind Park",
 "type": "wind",
@@ -97,8 +93,7 @@ curl -s -X POST http://193.225.250.240/optimusdb2/swarmkb/command \
 "capacity_mw": 800,
 "location": {"country": "Greece", "region": "Thrace"},
 "tags": ["renewable", "wind", "offshore-candidate"]
-}
-]
+}]
 }'
 ```
 
@@ -108,8 +103,7 @@ curl -s -X POST http://193.225.250.240/optimusdb3/swarmkb/command \
 -d '{
 "method": {"cmd": "crudput", "argcnt": 1},
 "dstype": "dsswres",
-"criteria": [
-{
+"criteria": [{
 "_id": "solar_crete_012",
 "name": "Crete Solar Installation",
 "type": "solar",
@@ -117,8 +111,7 @@ curl -s -X POST http://193.225.250.240/optimusdb3/swarmkb/command \
 "capacity_mw": 120,
 "location": {"country": "Greece", "region": "Crete"},
 "tags": ["solar", "island-grid"]
-}
-]
+}]
 }'
 ```
 
@@ -137,20 +130,79 @@ concurrently in the background.
 
 ---
 
-### 2. Search
+### 2. Index documents for semantic search
+
+After insert, each document must be indexed. This can happen automatically via the
+background goroutine in `crudPutDocStoreRev`, or manually via the index endpoint:
 
 ```bash
-curl -s "http://193.225.250.240/optimusdb1/swarmkb/api/v1/semantic/search\
-?q=solar+farm+high+capacity+operational&top_k=5&budget_ms=1500" \
+curl -s -X POST http://193.225.250.240/optimusdb1/api/v1/semantic/index \
+-H "Content-Type: application/json" \
+-d '{
+"store": "dsswres",
+"doc_id": "solar_attica_001",
+"fields": {
+"name": "Athens Solar Farm",
+"type": "solar",
+"status": "operational",
+"capacity_mw": "500",
+"location": "Greece Attica",
+"tags": "renewable solar high-capacity"
+}
+}'
+```
+
+```bash
+curl -s -X POST http://193.225.250.240/optimusdb2/api/v1/semantic/index \
+-H "Content-Type: application/json" \
+-d '{
+"store": "dsswres",
+"doc_id": "wind_thrace_007",
+"fields": {
+"name": "Thrace Wind Park",
+"type": "wind",
+"status": "operational",
+"capacity_mw": "800",
+"location": "Greece Thrace",
+"tags": "renewable wind offshore-candidate"
+}
+}'
+```
+
+```bash
+curl -s -X POST http://193.225.250.240/optimusdb3/api/v1/semantic/index \
+-H "Content-Type: application/json" \
+-d '{
+"store": "dsswres",
+"doc_id": "solar_crete_012",
+"fields": {
+"name": "Crete Solar Installation",
+"type": "solar",
+"status": "maintenance",
+"capacity_mw": "120",
+"location": "Greece Crete",
+"tags": "solar island-grid"
+}
+}'
+```
+
+---
+
+### 3. Search
+
+```bash
+curl -s "http://193.225.250.240/optimusdb1/api/v1/semantic/search\
+?q=solar+farm+high+capacity+operational&top_k=5" \
 | python3 -m json.tool
 ```
 
 ---
 
-### 3. Response
+### 4. Response
 
-Each result includes `document` — the full OrbitDB document content, fetched via
-`DocumentStore.Get()` after the ANN ranking is complete.
+Each result includes `doc_id`, `score`, `source_node`, and `store`. The `document`
+field is populated when the result comes from the local node (OrbitDB lookup via
+`DocumentStore.Get()`).
 
 ```json
 {
@@ -198,13 +250,12 @@ results and it is trimmed from the top-K.
 > - Present when `source_node` matches the coordinator node (local OrbitDB lookup
 >   via `DocumentStore.Get()`).
 > - `null` for results from remote peers — document content is not serialised over
->   GossipSub to keep reply payloads small. The coordinator can still resolve remote
->   docs if it holds a replica of the same OrbitDB store.
+>   GossipSub to keep reply payloads small.
 > - Internal fields `_id` and `_created_at` are stripped from the document payload.
 
 ---
 
-### 4. Peer merging (multi-node cluster)
+### 5. Peer merging (multi-node cluster)
 
 ```
 coordinator (node 1)
@@ -219,238 +270,6 @@ coordinator (node 1)
 merge: deduplicate wind_thrace_007 (keep score 0.81 > 0.79), trim to top_k=5
 final: [solar_attica_001: 0.94, wind_thrace_007: 0.81]
 ```
-
----
-
-## Integration changes
-
-Four surgical edits across three existing files. One new package (`semantic/`) drops
-in alongside `chat/`, `contextualmetadata/`.
-
-### §1 — `main.go`: load sqlite-vec + init SemanticIndex
-
-**Add imports and a second `init()` for the driver:**
-
-```go
-import (
-// existing imports ...
-_ "github.com/asg017/sqlite-vec-go-bindings/cgo" // NEW
-"optimusdb/semantic"                              // NEW
-)
-
-func init() {
-app.InitAgentName() // existing
-}
-
-// NEW — register sqlite3 with vec0 extension
-func init() {
-sql.Register("sqlite3_vec", &sqlite3.SQLiteDriver{
-Extensions: []string{"vec0"},
-})
-}
-```
-
-**Add a URL helper:**
-
-```go
-func llamaBaseURL(endpoint string) string {
-// "http://host:8080/v1/completions" → "http://host:8080"
-if idx := strings.Index(endpoint, "/v1/"); idx != -1 {
-return endpoint[:idx]
-}
-return endpoint
-}
-```
-
-**Init after GossipSub is ready** (immediately after `knowledgeBaseDB.PubSub = ps`):
-
-```go
-llamaURL := llamaBaseURL(os.Getenv("TINYLLAMA_ENDPOINT"))
-if llamaURL == "" {
-llamaURL = "http://localhost:8080"
-}
-
-semanticIdx, semanticErr := semantic.New(
-rdbms.DB,                   // *sql.DB
-llamaURL,                   // "http://localhost:8080"
-knowledgeBaseDB.Orbit,      // *iface.OrbitDB
-hostMain,                   // host.Host
-ps,                         // *pubsub.PubSub
-)
-if semanticErr != nil {
-logger.Warn("[SEMANTIC] Index unavailable: %v", semanticErr)
-} else {
-semanticIdx.WithFetcher(&knowledgeBaseDB)
-logger.Info("[SEMANTIC] Semantic search initialized (llama: %s)", llamaURL)
-knowledgeBaseDB.SemanticIdx = semanticIdx
-}
-```
-
----
-
-### §2 — `app/app.go`: add `FetchDocument` method
-
-This implements `semantic.DocFetcher` — the interface that lets `semantic.Index`
-fetch full document content from OrbitDB after ranking, without creating an import
-cycle. Add alongside the other KB interface methods:
-
-```go
-func (kb *KnowledgeBaseDB) FetchDocument(ctx context.Context, storeName, docID string) (map[string]interface{}, error) {
-var store iface.DocumentStore
-switch strings.ToLower(storeName) {
-case "dsswres":
-if kb.DsSWres == nil { return nil, fmt.Errorf("store not init") }
-store = *kb.DsSWres
-case "dsswresaloc":
-if kb.DsSWresaloc == nil { return nil, fmt.Errorf("store not init") }
-store = *kb.DsSWresaloc
-case "kbmetadata":
-if kb.KBMetadata == nil { return nil, fmt.Errorf("store not init") }
-store = *kb.KBMetadata
-case "kbdata":
-if kb.KBdata == nil { return nil, fmt.Errorf("store not init") }
-store = *kb.KBdata
-default:
-return nil, fmt.Errorf("unknown store: %s", storeName)
-}
-opts := &iface.DocumentStoreGetOptions{CaseInsensitive: false, PartialMatches: false}
-docs, err := store.Get(ctx, docID, opts)
-if err != nil || len(docs) == 0 {
-return nil, err
-}
-if m, ok := docs[0].(map[string]interface{}); ok {
-return m, nil
-}
-return nil, fmt.Errorf("unexpected doc type")
-}
-```
-
-**Add one field to `KnowledgeBaseDB`** (after `Interceptor`):
-
-```go
-// *semantic.Index — interface{} avoids import cycle
-SemanticIdx interface{}
-```
-
-**Change driver in `InitSQLite`:**
-
-```go
-// BEFORE:
-db, err := sql.Open("sqlite3", rdbmsCache)
-
-// AFTER:
-db, err := sql.Open("sqlite3_vec", rdbmsCache)
-```
-
----
-
-### §3 — `app/service.go`: hook into `crudPutDocStoreRev`
-
-Inside the `if insertSuccess` block (after the progress log, ~line 1295):
-
-```go
-if optimusdb.SemanticIdx != nil {
-fields := docFieldsToStringMap(docMap)
-go func(sn, id string, f map[string]string, sidx interface{}) {
-type indexer interface {
-IndexDocument(store, docID string, fields map[string]string) error
-}
-if idx, ok := sidx.(indexer); ok {
-if err := idx.IndexDocument(sn, id, f); err != nil {
-logger.Warn("[SEMANTIC] index failed %s/%s: %v", sn, id, err)
-}
-}
-}(storeName, docID, fields, optimusdb.SemanticIdx)
-}
-```
-
-Add the helper anywhere in `service.go`:
-
-```go
-func docFieldsToStringMap(doc map[string]interface{}) map[string]string {
-out := make(map[string]string, len(doc))
-for k, v := range doc {
-if k == "_id" || k == "_created_at" {
-continue
-}
-switch t := v.(type) {
-case string:
-out[k] = t
-case []interface{}:
-parts := make([]string, 0, len(t))
-for _, item := range t {
-if s, ok := item.(string); ok {
-parts = append(parts, s)
-}
-}
-out[k] = strings.Join(parts, " ")
-default:
-out[k] = fmt.Sprintf("%v", v)
-}
-}
-return out
-}
-```
-
----
-
-### §4 — `api/http.go`: register routes
-
-Inside `RegisterMetadataRoutes`, after the chat endpoint block:
-
-```go
-if kb.SemanticIdx != nil {
-type semanticRouter interface {
-SearchHandler(http.ResponseWriter, *http.Request)
-IndexHandler(http.ResponseWriter, *http.Request)
-BootstrapHandler(http.ResponseWriter, *http.Request)
-}
-if sidx, ok := kb.SemanticIdx.(semanticRouter); ok {
-apiV1.HandleFunc("/semantic/search",    sidx.SearchHandler).Methods("GET")
-apiV1.HandleFunc("/semantic/index",     sidx.IndexHandler).Methods("POST")
-apiV1.HandleFunc("/semantic/bootstrap", sidx.BootstrapHandler).Methods("POST")
-logger.Info("[SEMANTIC] Routes registered at /api/v1/semantic")
-}
-}
-```
-
----
-
-### §5 — `Dockerfile`: enable the `/embedding` route and bind to `0.0.0.0`
-
-Two changes are required in the supervisord config section:
-
-1. Add `--embedding` so llama-server activates the `/embedding` endpoint
-2. Change `--host` from `127.0.0.1` to `0.0.0.0` so Traefik can reach it via the
-ClusterIP service — `127.0.0.1` only accepts loopback connections and causes
-a 502 Bad Gateway when Traefik tries to route `/optimusdbN/embedding` to the pod
-
-```dockerfile
-# BEFORE:
-command=/usr/local/bin/llama-server -m /models/tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf \
--c 2048 --host 127.0.0.1 --port 8080 --n-gpu-layers 0
-
-# AFTER:
-command=/usr/local/bin/llama-server -m /models/tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf \
--c 2048 --host 0.0.0.0 --port 8080 --n-gpu-layers 0 --embedding
-```
-
-> **Note:** The `TINYLLAMA_ENDPOINT` and `TINYLLAMA_EMBEDDING_ENDPOINT` environment
-> variables inside the container still use `127.0.0.1` — that is correct. Those are
-> used by the Go application calling llama-server from inside the same pod (loopback).
-> Only the `--host` flag on llama-server itself needs to be `0.0.0.0` so that
-> external traffic routed by Traefik through the ClusterIP service can reach it.
-
----
-
-## New dependency
-
-```bash
-go get github.com/asg017/sqlite-vec-go-bindings/cgo
-```
-
-The C library ships with the Go module via CGo — no separate shared library install
-needed.
 
 ---
 
@@ -469,8 +288,8 @@ Search all indexed documents using natural language.
 **Example:**
 
 ```bash
-curl -s "http://193.225.250.240/optimusdb1/swarmkb/api/v1/semantic/search\
-?q=solar+farm+high+capacity+operational&top_k=5&budget_ms=1500"
+curl -s "http://193.225.250.240/optimusdb1/api/v1/semantic/search\
+?q=solar+farm+high+capacity+operational&top_k=5"
 ```
 
 ---
@@ -481,7 +300,7 @@ Manually (re-)index a document. Useful after schema changes or for documents
 inserted before semantic search was enabled.
 
 ```bash
-curl -s -X POST http://193.225.250.240/optimusdb1/swarmkb/api/v1/semantic/index \
+curl -s -X POST http://193.225.250.240/optimusdb1/api/v1/semantic/index \
 -H "Content-Type: application/json" \
 -d '{
 "store":  "dsswres",
@@ -505,7 +324,7 @@ inference. Called automatically when a node replicates a document from a peer
 and the CID is available in `vec_meta`.
 
 ```bash
-curl -s -X POST http://193.225.250.240/optimusdb1/swarmkb/api/v1/semantic/bootstrap \
+curl -s -X POST http://193.225.250.240/optimusdb1/api/v1/semantic/bootstrap \
 -H "Content-Type: application/json" \
 -d '{"doc_id": "solar_attica_001", "ipfs_cid": "QmXyz..."}'
 ```
@@ -558,7 +377,7 @@ curl -s -X POST http://193.225.250.240/optimusdb1/embedding \
 "import sys,json; d=json.load(sys.stdin); print(len(d['embedding']), 'dims')"
 # Expected: 2048 dims
 
-# 2. Insert a document (triggers background indexing)
+# 2. Insert a document
 curl -s -X POST http://193.225.250.240/optimusdb1/swarmkb/command \
 -H "Content-Type: application/json" \
 -d '{
@@ -567,9 +386,13 @@ curl -s -X POST http://193.225.250.240/optimusdb1/swarmkb/command \
 "criteria": [{"_id":"test_001","name":"Test Solar Farm","type":"solar","status":"operational"}]
 }'
 
-# 3. Wait ~2s for indexing goroutine, then search
-curl -s "http://193.225.250.240/optimusdb1/swarmkb/api/v1/semantic/search\
-?q=solar+operational&top_k=3"
+# 3. Index the document
+curl -s -X POST http://193.225.250.240/optimusdb1/api/v1/semantic/index \
+-H "Content-Type: application/json" \
+-d '{"store":"dsswres","doc_id":"test_001","fields":{"name":"Test Solar Farm","type":"solar","status":"operational"}}'
+
+# 4. Search
+curl -s "http://193.225.250.240/optimusdb1/api/v1/semantic/search?q=solar+operational&top_k=3"
 ```
 
 ---
@@ -582,11 +405,18 @@ optimusdb/
 │   ├── semantic_search.go    ← Index struct, embed(), localANN(), GossipSub, IPFS pin
 │   ├── doc_fetch.go          ← DocFetcher interface, enrichResults(), SearchResult.Document
 │   └── http_handlers.go      ← SearchHandler, IndexHandler, BootstrapHandler
-├── main.go                   ← +init() for sqlite-vec, +semantic.New(), +WithFetcher()
+├── main.go                   ← background semantic init goroutine, WithFetcher()
 ├── app/
-│   ├── app.go                ← +SemanticIdx field, driver change, +FetchDocument() method
-│   └── service.go            ← +goroutine in crudPutDocStoreRev, +docFieldsToStringMap()
+│   ├── app.go                ← SemanticIdx field, sqlite3_vec_kb driver, FetchDocument()
+│   ├── sqlite_ext_linux.go   ← SQLiteDriver.Extensions + EnableLoadExtension (Linux/CGO)
+│   └── sqlite_ext_other.go   ← plain SQLiteDriver fallback (Windows/dev)
 ├── api/
-│   └── http.go               ← +3 routes in RegisterMetadataRoutes
-└── Dockerfile                ← --host 0.0.0.0 --embedding on llama-server command
+│   └── http.go               ← 3 routes: /semantic/search, /semantic/index, /semantic/bootstrap
+└── Dockerfile                ← patchelf libm.so.6 fix for vec0.so, --embedding on llama-server
 ```
+
+---
+
+## References
+
+- Swarmchestrate project: EU Horizon Europe Grant #101135012
