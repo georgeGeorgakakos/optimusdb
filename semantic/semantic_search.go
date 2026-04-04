@@ -221,8 +221,10 @@ func (idx *Index) handleIncomingReplies() {
 }
 
 // ── Public API ────────────────────────────────────────────────────────────────
-
-// IndexDocument embeds fields, writes to sqlite-vec, and pins to IPFS.
+// Upsert (ON CONFLICT DO UPDATE) is not implemented for vec0 virtual tables GitHub — this is an open issue (#127)
+// with no fix released as of April 2026.
+// It is a fundamental limitation of SQLite virtual tables,
+// not a sqlite-vec version bug. No upgrade will solve it.
 func (idx *Index) IndexDocument(storeName, docID string, fields map[string]string) error {
 	text := buildIndexText(fields)
 	vector, err := idx.embed(text)
@@ -230,16 +232,32 @@ func (idx *Index) IndexDocument(storeName, docID string, fields map[string]strin
 		return fmt.Errorf("embed %s/%s: %w", storeName, docID, err)
 	}
 	blob := encodeVec(vector)
-	if _, err := idx.db.Exec(`
-		INSERT OR REPLACE INTO vec_embeddings(doc_id, embedding)
-		VALUES (?, ?)`, docID, blob); err != nil {
+
+	// vec0 virtual tables do not support ON CONFLICT / INSERT OR REPLACE.
+	// The correct upsert pattern is DELETE then INSERT in a transaction.
+	tx, err := idx.db.Begin()
+	if err != nil {
+		return fmt.Errorf("begin tx %s: %w", docID, err)
+	}
+	defer tx.Rollback()
+
+	tx.Exec(`DELETE FROM vec_embeddings WHERE doc_id = ?`, docID)
+	tx.Exec(`DELETE FROM vec_meta WHERE doc_id = ?`, docID)
+
+	if _, err := tx.Exec(`
+        INSERT INTO vec_embeddings(doc_id, embedding)
+        VALUES (?, ?)`, docID, blob); err != nil {
 		return fmt.Errorf("vec upsert %s: %w", docID, err)
 	}
+
 	cid := idx.pinToIPFS(blob)
-	_, err = idx.db.Exec(`
-		INSERT OR REPLACE INTO vec_meta(doc_id, ipfs_cid, store_name, source_text)
-		VALUES (?, ?, ?, ?)`, docID, cid, storeName, text)
-	return err
+	if _, err := tx.Exec(`
+        INSERT INTO vec_meta(doc_id, ipfs_cid, store_name, source_text)
+        VALUES (?, ?, ?, ?)`, docID, cid, storeName, text); err != nil {
+		return fmt.Errorf("meta upsert %s: %w", docID, err)
+	}
+
+	return tx.Commit()
 }
 
 // BootstrapFromIPFS fetches a peer's embedding blob and inserts it locally.
