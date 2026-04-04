@@ -26,7 +26,8 @@ descriptors across the distributed cluster.
 | `context` | `swarmkb` |
 | `dataStore` | `dsswres` |
 
-All insert and query operations use `POST {{base_url}}/optimusdbN/{{context}}/command`.
+Structured insert/query operations use `POST {{base_url}}/optimusdbN/{{context}}/command`.
+Semantic index/search operations use `POST/GET {{base_url}}/optimusdbN/api/v1/semantic/`.
 
 ---
 
@@ -398,17 +399,128 @@ Expected: `tosca_deploymentplan_webapp_release_v1_0_0`
 
 ---
 
+## Step 3.5 — Index all documents for Semantic Search
+
+> **Important:** Before running semantic queries, each document must be indexed.
+> This step sends the document content to TinyLlama-1.1B, generates a 2048-dimension
+> embedding, and stores it in the local sqlite-vec table. The embedding is also pinned
+> to IPFS for cross-node availability via GossipSub.
+
+### Index Document 1 — WebApp Application Description
+
+```bash
+curl -s -X POST http://193.225.250.240/optimusdb1/api/v1/semantic/index \
+-H "Content-Type: application/json" \
+-d '{
+"store": "dsswres",
+"doc_id": "tosca_webapp_microservicesapplication_v1_0_0",
+"fields": {
+"name": "WebApp-MicroservicesApplication",
+"description": "E-commerce web application with frontend, backend API, and database components",
+"tags": "docker postgresql redis frontend backend database scaling placement monitoring",
+"type": "application_description"
+}
+}'
+```
+
+Expected: `{"doc_id": "tosca_webapp_microservicesapplication_v1_0_0", "status": "indexed"}`
+
+### Index Document 2 — EdgeCluster Capacity Profile
+
+```bash
+curl -s -X POST http://193.225.250.240/optimusdb2/api/v1/semantic/index \
+-H "Content-Type: application/json" \
+-d '{
+"store": "dsswres",
+"doc_id": "tosca_edgecluster_capacityprofile_v1_0_0",
+"fields": {
+"name": "EdgeCluster-CapacityProfile",
+"description": "Available capacity at edge location including compute, storage, and network resources",
+"tags": "GPU NVIDIA A100 edge compute kubernetes storage eu-central available capacity 24 CPU 96GB",
+"type": "capacity_description",
+"region": "eu-central-1"
+}
+}'
+```
+
+Expected: `{"doc_id": "tosca_edgecluster_capacityprofile_v1_0_0", "status": "indexed"}`
+
+### Index Document 3 — HybridInfrastructure Template
+
+```bash
+curl -s -X POST http://193.225.250.240/optimusdb1/api/v1/semantic/index \
+-H "Content-Type: application/json" \
+-d '{
+"store": "dsswres",
+"doc_id": "tosca_hybridinfrastructure_swarmdeployment_v1_0_0",
+"fields": {
+"name": "HybridInfrastructure-SwarmDeployment",
+"description": "Hybrid infrastructure template combining TOSCA service descriptions with OpenTofu infrastructure provisioning",
+"tags": "kubernetes nginx istio prometheus monitoring observability security opentofu hybrid infrastructure",
+"type": "opentofu_tosca_template"
+}
+}'
+```
+
+Expected: `{"doc_id": "tosca_hybridinfrastructure_swarmdeployment_v1_0_0", "status": "indexed"}`
+
+### Index Document 4 — Deployment Release Plan
+
+```bash
+curl -s -X POST http://193.225.250.240/optimusdb1/api/v1/semantic/index \
+-H "Content-Type: application/json" \
+-d '{
+"store": "dsswres",
+"doc_id": "tosca_deploymentplan_webapp_release_v1_0_0",
+"fields": {
+"name": "DeploymentPlan-WebApp-Release",
+"description": "Executable deployment plan with specific resource assignments and orchestration instructions",
+"tags": "deployment release ready orchestration rollback workflow capacity matching successful",
+"type": "deployment_release_plan",
+"status": "ready_for_deployment"
+}
+}'
+```
+
+Expected: `{"doc_id": "tosca_deploymentplan_webapp_release_v1_0_0", "status": "indexed"}`
+
+### Index Document 5 — ML Training Workload Requirements
+
+```bash
+curl -s -X POST http://193.225.250.240/optimusdb1/api/v1/semantic/index \
+-H "Content-Type: application/json" \
+-d '{
+"store": "dsswres",
+"doc_id": "tosca_applicationrequirements_mltrainingworkload_v1_0_0",
+"fields": {
+"name": "ApplicationRequirements-MLTrainingWorkload",
+"description": "Machine Learning training workload requirements for computer vision model",
+"tags": "GPU machine learning training computer vision requirements 32GB high priority gold SLA eu-central eu-west",
+"type": "application_requirements"
+}
+}'
+```
+
+Expected: `{"doc_id": "tosca_applicationrequirements_mltrainingworkload_v1_0_0", "status": "indexed"}`
+
+---
+
 ## Step 4 — Search with free text sentences
 
 Now the same artifacts can be found using plain English — no knowledge of field names
 or document structure required. The semantic search understands the *intent* of the
 question and matches it against the indexed content.
 
+The semantic search endpoint is:
+```
+GET http://193.225.250.240/optimusdbN/api/v1/semantic/search?q=...&top_k=5
+```
+
 ### "Which applications need a GPU?"
 
 ```bash
-curl -s "http://193.225.250.240/optimusdb1/swarmkb/api/v1/semantic/search\
-?q=which+applications+need+a+GPU&top_k=5&budget_ms=2000" | python3 -m json.tool
+curl -s "http://193.225.250.240/optimusdb1/api/v1/semantic/search\
+?q=which+applications+need+a+GPU&top_k=5" | python3 -m json.tool
 ```
 
 Expected: `tosca_applicationrequirements_mltrainingworkload_v1_0_0` and
@@ -419,8 +531,8 @@ Expected: `tosca_applicationrequirements_mltrainingworkload_v1_0_0` and
 ### "Show me available infrastructure in Europe"
 
 ```bash
-curl -s "http://193.225.250.240/optimusdb1/swarmkb/api/v1/semantic/search\
-?q=available+infrastructure+in+Europe&top_k=5&budget_ms=2000" | python3 -m json.tool
+curl -s "http://193.225.250.240/optimusdb1/api/v1/semantic/search\
+?q=available+infrastructure+in+Europe&top_k=5" | python3 -m json.tool
 ```
 
 Expected: `tosca_edgecluster_capacityprofile_v1_0_0` ranked first.
@@ -430,8 +542,8 @@ Expected: `tosca_edgecluster_capacityprofile_v1_0_0` ranked first.
 ### "I need to deploy a web application with a database"
 
 ```bash
-curl -s "http://193.225.250.240/optimusdb1/swarmkb/api/v1/semantic/search\
-?q=deploy+web+application+with+database&top_k=5&budget_ms=2000" | python3 -m json.tool
+curl -s "http://193.225.250.240/optimusdb1/api/v1/semantic/search\
+?q=deploy+web+application+with+database&top_k=5" | python3 -m json.tool
 ```
 
 Expected: `tosca_webapp_microservicesapplication_v1_0_0` ranked first.
@@ -441,8 +553,8 @@ Expected: `tosca_webapp_microservicesapplication_v1_0_0` ranked first.
 ### "What is ready to be deployed right now?"
 
 ```bash
-curl -s "http://193.225.250.240/optimusdb1/swarmkb/api/v1/semantic/search\
-?q=ready+to+be+deployed+right+now&top_k=5&budget_ms=2000" | python3 -m json.tool
+curl -s "http://193.225.250.240/optimusdb1/api/v1/semantic/search\
+?q=ready+to+be+deployed+right+now&top_k=5" | python3 -m json.tool
 ```
 
 Expected: `tosca_deploymentplan_webapp_release_v1_0_0` ranked first.
@@ -452,8 +564,8 @@ Expected: `tosca_deploymentplan_webapp_release_v1_0_0` ranked first.
 ### "Find me something that uses Kubernetes and monitoring"
 
 ```bash
-curl -s "http://193.225.250.240/optimusdb1/swarmkb/api/v1/semantic/search\
-?q=Kubernetes+and+monitoring&top_k=5&budget_ms=2000" | python3 -m json.tool
+curl -s "http://193.225.250.240/optimusdb1/api/v1/semantic/search\
+?q=Kubernetes+and+monitoring&top_k=5" | python3 -m json.tool
 ```
 
 Expected: `tosca_hybridinfrastructure_swarmdeployment_v1_0_0` ranked first.
@@ -463,8 +575,8 @@ Expected: `tosca_hybridinfrastructure_swarmdeployment_v1_0_0` ranked first.
 ### "What do I need for a machine learning training job?"
 
 ```bash
-curl -s "http://193.225.250.240/optimusdb1/swarmkb/api/v1/semantic/search\
-?q=machine+learning+training+job+requirements&top_k=5&budget_ms=2000" | python3 -m json.tool
+curl -s "http://193.225.250.240/optimusdb1/api/v1/semantic/search\
+?q=machine+learning+training+job+requirements&top_k=5" | python3 -m json.tool
 ```
 
 Expected: `tosca_applicationrequirements_mltrainingworkload_v1_0_0` ranked first.
@@ -473,11 +585,13 @@ Expected: `tosca_applicationrequirements_mltrainingworkload_v1_0_0` ranked first
 
 ### Cross-node query — ask from node 3, find documents stored on nodes 1 and 2
 
-The capacity profile lives on node 2. Querying from node 3 retrieves it via GossipSub:
+The capacity profile was indexed on node 2. Querying from node 3 retrieves it via
+GossipSub — node 3 fans out the query, node 2 responds with its local ANN result,
+and node 3 merges and returns the final ranking.
 
 ```bash
-curl -s "http://193.225.250.240/optimusdb3/swarmkb/api/v1/semantic/search\
-?q=edge+cluster+GPU+available+capacity&top_k=5&budget_ms=2000" | python3 -m json.tool
+curl -s "http://193.225.250.240/optimusdb3/api/v1/semantic/search\
+?q=edge+cluster+GPU+available+capacity&top_k=5" | python3 -m json.tool
 ```
 
 The `source_node` field in the result for `tosca_edgecluster_capacityprofile_v1_0_0`
@@ -523,4 +637,3 @@ echo "Cleanup complete"
 
 - Swarmchestrate project: EU Horizon Europe Grant #101135012
 - TOSCA Version 2.0: OASIS Standard, March 2023
-- OptimusDB paper: Procedia Computer Science, Vol. 278, CENTERIS/ProjMAN/HCist 2025
