@@ -75,7 +75,9 @@ FROM ubuntu:22.04
 
 WORKDIR /root/
 
-# Install runtime dependencies and supervisor for process management
+# Install runtime dependencies and supervisor for process management.
+# patchelf is required to add libm.so.6 dependency to vec0.so — this fixes
+# the "undefined symbol: sqrtf" error when loading vec0 at driver init time.
 RUN apt update && apt install -y \
     sqlite3 \
     libsqlite3-dev \
@@ -95,6 +97,7 @@ RUN apt update && apt install -y \
     supervisor \
     libgomp1 \
     libstdc++6 \
+    patchelf \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy binaries from builder stage
@@ -103,6 +106,14 @@ COPY --from=builder /optimusdbKB/optimusdb /usr/local/bin/optimusdb
 
 # Copy sqlite-vec loadable extension from builder stage
 COPY --from=builder /usr/lib/sqlite-vec/vec0.so /usr/lib/sqlite-vec/vec0.so
+
+# Patch vec0.so to explicitly depend on libm.so.6.
+# vec0.so uses sqrtf() but was built without an explicit libm dependency.
+# Without this patch, loading vec0.so at driver init time fails with:
+#   "undefined symbol: sqrtf"
+# patchelf adds the explicit DT_NEEDED entry so the dynamic linker always
+# loads libm before vec0.so regardless of when the extension is loaded.
+RUN patchelf --add-needed libm.so.6 /usr/lib/sqlite-vec/vec0.so
 
 # Create necessary directories
 RUN mkdir -p /data/orbitdb /data/ipfs /config /models /var/log/supervisor /var/run
