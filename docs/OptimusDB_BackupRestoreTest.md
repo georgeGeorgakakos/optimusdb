@@ -17,6 +17,7 @@
 8. [Discussion and limitations](#8-discussion-and-limitations)
 9. [Reproducibility](#9-reproducibility)
 10. [Appendix — raw test output](#10-appendix--raw-test-output)
+11. [Example runs](#11-example-runs)
 
 ---
 
@@ -353,8 +354,15 @@ All checks passed.
 
 ---
 
-## 7. Results
+## 11. Example runs
 
-![Results summary](images/Screenshot 2026-04-18 204454.png)
-![Results summary](images/Screenshot 2026-04-18 204515.png)
+Screenshots of the live test run, captured during execution on 18 April 2026
+against the `epm-server` cluster. Shown for verification that the text-based
+appendix output (Section 10) reflects the actual observed execution.
+
+![Example run — Phase 1](images/example_run_01.png)
+![Example run — Phase 2](images/example_run_02.png)
+
+---
+
 *End of report.*
