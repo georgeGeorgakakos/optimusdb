@@ -72,6 +72,7 @@ Key goals:
 - [Environment Variables](#environment-variables)
 - [HTTP API](#http-api)
 - [Backup and Restore process](docs/OptimusDB_BackupRestore.md)
+- [Backup and Restore testing process](docs/OptimusDB_BackupRestoreTest.md)
 - [Development Notes](#development-notes)
 - [Research Contribution / Beyond State of the Art](#research-contribution--beyond-state-of-the-art)
 - [Contributing](#contributing)
