@@ -1716,14 +1716,53 @@ func RegisterMetadataRoutes(router *mux.Router, kb *app.KnowledgeBaseDB) {
 		QueryFunc:    queryFunc,
 		SchemaFunc:   schemaFunc,
 		Datasets: []chat.DatasetInfo{
-			{Type: "dsswres", Name: "Solar & Wind Resources", Description: "Renewable energy asset metadata including solar panels and wind turbines"},
-			{Type: "dsswresaloc", Name: "Resource Allocations", Description: "Resource allocation and scheduling data"},
-			{Type: "kbmetadata", Name: "Knowledge Base Metadata", Description: "Catalog metadata including tables and columns"},
-			{Type: "kbdata", Name: "Knowledge Base Data", Description: "General knowledge base documents"},
+			// Knowledge-base core
+			{Type: "kbdata", Name: "Knowledge base data",
+				Description: "General knowledge-base documents and records"},
+			{Type: "kbmetadata", Name: "Knowledge base metadata",
+				Description: "Catalog metadata including tables, columns, schemas"},
+			{Type: "validations", Name: "Validations",
+				Description: "Validation records and audit data"},
+			{Type: "whoiswho", Name: "Who-is-who directory",
+				Description: "Identity and role metadata for peers and services"},
+
+			// Energy/resources
+			{Type: "dsswres", Name: "Solar and wind resources",
+				Description: "Renewable energy asset metadata — solar panels, wind turbines, resource specs, locations"},
+			{Type: "dsswresaloc", Name: "Resource allocations",
+				Description: "Resource allocation and scheduling data for energy assets"},
+
+			// TOSCA orchestration (Swarmchestrate)
+			{Type: "tosca_adt", Name: "TOSCA application descriptor templates",
+				Description: "TOSCA ADT templates defining application topology — nodes, relationships, policies"},
+			{Type: "tosca_imported", Name: "TOSCA imported templates",
+				Description: "Third-party TOSCA templates imported into the catalog"},
+			{Type: "tosca_capacities", Name: "TOSCA capacity profiles",
+				Description: "Compute, memory, storage capacity requirements for TOSCA deployments — fields include num_cpus, mem_size, storage, network_bandwidth"},
+			{Type: "tosca_deploymentplan", Name: "TOSCA deployment plans",
+				Description: "Scheduled deployment plans derived from TOSCA ADTs"},
+			{Type: "tosca_eventhistory", Name: "TOSCA event history",
+				Description: "Runtime events and lifecycle transitions for TOSCA deployments"},
 		},
 		Timeout:   30 * time.Second,
 		SchemaTTL: 5 * time.Minute,
 	}
+
+	//NOTES
+
+	//The Description fields are READ BY THE LLM when picking a dataset. Keep
+	//them factual, specific, and naming the fields. The description for
+	//	tosca_capacities explicitly mentions num_cpus and mem_size — that's how
+	//TinyLlama learns to route "find apps with 2 vCPUs" to this store rather
+	//than the default.
+	//The ordering doesn't matter to the LLM, but grouping by subsystem
+	//(knowledge-base core / energy / TOSCA) makes the config easier to
+	//maintain as stores are added or removed.
+	//If any of these stores aren't initialised on a given node, the query
+	//will return "store X not initialized on this node" — this is the new
+	//explicit error from Patch 1. That's the right behaviour; the chat
+	//handler can pass that message through to the user.
+
 	chatAdapter := chat.NewKnowledgeBaseAdapter(adapterConfig)
 
 	// Create the chat handler
@@ -1853,7 +1892,10 @@ func createKBQueryFunc(kb *app.KnowledgeBaseDB) chat.QueryFunc {
 	return func(ctx context.Context, dstype string, criteria []map[string]interface{}) ([]map[string]interface{}, error) {
 		logger.Debug("[CHAT-QUERY] Executing query on dstype=%s with %d criteria", dstype, len(criteria))
 
-		// Get the appropriate store
+		// Get the appropriate store — all 11 OrbitDB docstores.
+		// Returning an explicit error (not silently falling back to dsswres)
+		// lets the chat adapter surface "I don't know that store" instead of
+		// returning wrong-store results.
 		var store interface{}
 		switch dstype {
 		case "dsswres":
@@ -1872,15 +1914,42 @@ func createKBQueryFunc(kb *app.KnowledgeBaseDB) chat.QueryFunc {
 			if kb.KBdata != nil {
 				store = *kb.KBdata
 			}
-		default:
-			// Default to dsswres
-			if kb.DsSWres != nil {
-				store = *kb.DsSWres
+		case "validations":
+			if kb.Validations != nil {
+				store = *kb.Validations
 			}
+		case "whoiswho":
+			if kb.WhoiswhoStore != nil {
+				store = *kb.WhoiswhoStore
+			}
+		case "tosca_adt":
+			if kb.DsTOSCA_ADT != nil {
+				store = *kb.DsTOSCA_ADT
+			}
+		case "tosca_imported":
+			if kb.DsTOSCA_Imported != nil {
+				store = *kb.DsTOSCA_Imported
+			}
+		case "tosca_capacities":
+			if kb.DsTOSCA_Capacities != nil {
+				store = *kb.DsTOSCA_Capacities
+			}
+		case "tosca_deploymentplan":
+			if kb.DsTOSCA_DeploymentPlan != nil {
+				store = *kb.DsTOSCA_DeploymentPlan
+			}
+		case "tosca_eventhistory":
+			if kb.DsTOSCA_EventHistory != nil {
+				store = *kb.DsTOSCA_EventHistory
+			}
+		default:
+			return nil, fmt.Errorf("unknown store: %s (valid: dsswres, dsswresaloc, "+
+				"kbmetadata, kbdata, validations, whoiswho, tosca_adt, tosca_imported, "+
+				"tosca_capacities, tosca_deploymentplan, tosca_eventhistory)", dstype)
 		}
 
 		if store == nil {
-			return nil, fmt.Errorf("store %s not initialized", dstype)
+			return nil, fmt.Errorf("store %s not initialized on this node", dstype)
 		}
 
 		// Type assert to get Query method

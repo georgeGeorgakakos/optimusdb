@@ -107,8 +107,8 @@ func (s *Service) storeRegistry() map[string]*orbitdb.DocumentStore {
 	add("tosca_adt", kb.DsTOSCA_ADT)
 	add("tosca_imported", kb.DsTOSCA_Imported)
 	add("tosca_capacities", kb.DsTOSCA_Capacities)
-	add("tosca_deployment_plan", kb.DsTOSCA_DeploymentPlan)
-	add("tosca_event_history", kb.DsTOSCA_EventHistory)
+	add("tosca_deploymentplan", kb.DsTOSCA_DeploymentPlan)
+	add("tosca_eventhistory", kb.DsTOSCA_EventHistory)
 	return m
 }
 

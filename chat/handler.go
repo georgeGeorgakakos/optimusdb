@@ -418,24 +418,96 @@ func (h *Handler) handleDataQuery(ctx context.Context, message string, history [
 // ============================================================================
 // HELPER FUNCTIONS
 // ============================================================================
+/*
+	DESIGN NOTES
+
+	TOSCA routing is FIRST because these keywords (cpu, memory, application,
+	deployment) are the ones most likely to collide with the energy domain
+	patterns that follow. A query like "find applications with 2 vCPUs and
+	2GB memory" should NEVER reach the energy-domain regex.
+	The word "capacity" was REMOVED from the dsswres regex because it's
+	ambiguous — TOSCA has capacity profiles too, and the ambiguity was
+	causing false routing. If someone wants renewable-energy capacity
+	queries, they'll use more specific words (kwh, mwh, generation).
+	Word boundaries (\b) are used throughout so "scheduled" doesn't match
+	"scheduler" and "vm" doesn't match inside "vmware". The original code
+	didn't use these, which caused subtle false-positives.
+	"dstelemetry" and "dsmeta" were removed — those aren't real stores in
+	this codebase. They were leftover from an earlier design.
+	Ordering matters. Within the TOSCA block, more specific patterns
+	(deployment, event) come before general ones. The capacity pattern is
+	first because it's the most common TOSCA query shape.
+
+	LIMITATIONS
+	Regex routing is inherently brittle. A prompt like "how many deployments
+	have more than 2 CPUs" will route to tosca_deploymentplan (matches
+	"deployment" first) rather than tosca_capacities (which has the num_cpus
+	field). The user will get zero results because deployment_plan docs don't
+	have num_cpus.
+	The fix for this is a second-stage LLM router that picks the dataset
+	AFTER seeing the prompt's actual structure. That's a bigger change and
+	not in this patch. For now, the simple regex approach handles the 80%
+	case and is much better than what exists today.
+*/
 
 func (h *Handler) inferDatasetType(message string) string {
 	message = strings.ToLower(message)
 
-	if matched, _ := regexp.MatchString(`(solar|pv|photovoltaic|panel)`, message); matched {
+	// TOSCA routing — check these FIRST because TOSCA questions often contain
+	// words like "application" or "deployment" that are too generic to match
+	// energy-domain patterns but specific to TOSCA in this system's context.
+	if matched, _ := regexp.MatchString(
+		`\b(tosca|vcpu|vcpus|cpu|cpus|mem|memory|ram|gb|mb|vm|vms|gpu)\b`, message); matched {
+		// Numeric compute queries overwhelmingly target capacity profiles.
+		return "tosca_capacities"
+	}
+	if matched, _ := regexp.MatchString(
+		`\b(deployment|deploy|deployed|rollout)\b`, message); matched {
+		return "tosca_deploymentplan"
+	}
+	if matched, _ := regexp.MatchString(
+		`\b(event|history|timeline|lifecycle)\b`, message); matched {
+		return "tosca_eventhistory"
+	}
+	if matched, _ := regexp.MatchString(
+		`\b(adt|node[_ ]?template|topology|policy|application[_ ]?descriptor)\b`, message); matched {
+		return "tosca_adt"
+	}
+	if matched, _ := regexp.MatchString(
+		`\b(imported|third[- ]?party)\b`, message); matched {
+		return "tosca_imported"
+	}
+
+	// Energy/resource domain — solar, wind, generation
+	if matched, _ := regexp.MatchString(
+		`\b(solar|pv|photovoltaic|panel)\b`, message); matched {
 		return "dsswres"
 	}
-	if matched, _ := regexp.MatchString(`(wind|turbine|windmill)`, message); matched {
+	if matched, _ := regexp.MatchString(
+		`\b(wind|turbine|windmill)\b`, message); matched {
 		return "dsswres"
 	}
-	if matched, _ := regexp.MatchString(`(energy|power|capacity|generation|renewable)`, message); matched {
+	if matched, _ := regexp.MatchString(
+		`\b(renewable|generation|kwh|mwh)\b`, message); matched {
 		return "dsswres"
 	}
-	if matched, _ := regexp.MatchString(`(telemetry|sensor|measurement|reading)`, message); matched {
-		return "dstelemetry"
+	if matched, _ := regexp.MatchString(
+		`\b(allocation|allocated|schedule|scheduled|reservation)\b`, message); matched {
+		return "dsswresaloc"
 	}
-	if matched, _ := regexp.MatchString(`(metadata|catalog|table|column|schema)`, message); matched {
-		return "dsmeta"
+
+	// Knowledge-base housekeeping
+	if matched, _ := regexp.MatchString(
+		`\b(metadata|catalog|table|column|schema|field)\b`, message); matched {
+		return "kbmetadata"
+	}
+	if matched, _ := regexp.MatchString(
+		`\b(validation|validate|verified|valid|invalid)\b`, message); matched {
+		return "validations"
+	}
+	if matched, _ := regexp.MatchString(
+		`\b(who|role|identity|directory|whoiswho)\b`, message); matched {
+		return "whoiswho"
 	}
 
 	return ""
