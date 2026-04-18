@@ -91,7 +91,12 @@ type KnowledgeBaseDB struct {
 	// NEW: SemanticIdx holds *semantic.Index — stored as interface{} to avoid
 	// an import cycle between the app and semantic packages.
 	// Cast with: kb.SemanticIdx.(*semantic.Index)
+
 	SemanticIdx interface{}
+	// ExchangeService holds *backupfunc.Service — interface{} to avoid
+	// an import cycle between the app and backupfunc packages.
+	// Cast with: kb.ExchangeService.(*backupfunc.Service)
+	ExchangeService interface{}
 }
 
 // ============================================================================
@@ -247,7 +252,8 @@ type Log struct {
 // ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // KnowledgeBaseSQLite manages SQLite connection
 type KnowledgeBaseSQLite struct {
-	DB *sql.DB
+	DB     *sql.DB
+	DBPath string // on-disk path, needed by backupfunc for import-time restore
 }
 
 type LoggerSQLite struct {
@@ -287,7 +293,8 @@ func InitSQLite(dbPath string) (*KnowledgeBaseSQLite, error) {
 	//db.SetMaxOpenConns(1) -- crashing with this////
 
 	// Create the KnowledgeBaseSQLite instance
-	GlobalKBSQLite = &KnowledgeBaseSQLite{DB: db}
+	//GlobalKBSQLite = &KnowledgeBaseSQLite{DB: db}
+	GlobalKBSQLite = &KnowledgeBaseSQLite{DB: db, DBPath: dbPath}
 
 	// Create tables
 	err = GlobalKBSQLite.createDataCatalog()

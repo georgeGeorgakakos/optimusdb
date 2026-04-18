@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"optimusdb/api"
 	"optimusdb/app"
+	"optimusdb/backupfunc"
 	"optimusdb/config"
 	"optimusdb/contextualmetadata"
 	"optimusdb/election"
@@ -616,6 +617,16 @@ func main() {
 			}
 		}
 	}(llamaURL)
+	// ═══════════════════════════════════════════════════════════════
+
+	// ═══════════════════════════════════════════════════════════════
+	// EXCHANGE — export/import of full node state via REST
+	// ═══════════════════════════════════════════════════════════════
+	knowledgeBaseDB.ExchangeService = backupfunc.New(
+		&knowledgeBaseDB,
+		app.GlobalKBSQLite,
+	)
+	logger.Info("[EXCHANGE] Service initialized — routes live at /api/v1/exchange/{export,import}")
 	// ═══════════════════════════════════════════════════════════════
 
 	// ===============================

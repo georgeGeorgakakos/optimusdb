@@ -1809,6 +1809,43 @@ func RegisterMetadataRoutes(router *mux.Router, kb *app.KnowledgeBaseDB) {
 	}).Methods("POST")
 
 	logger.Info("[SEMANTIC] Routes registered at /api/v1/semantic/{search,index,bootstrap} (dynamic — active once llama-server is ready)")
+
+	// ═══════════════════════════════════════════════════════════════
+	// EXCHANGE (export/import) — dynamic check at request time so the
+	// route is registered even if ExchangeService is wired up later.
+	// ═══════════════════════════════════════════════════════════════
+	apiV1.HandleFunc("/exchange/export", func(w http.ResponseWriter, r *http.Request) {
+		if kb.ExchangeService == nil {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusServiceUnavailable)
+			w.Write([]byte(`{"error":"exchange service not initialized"}`))
+			return
+		}
+		type exporter interface {
+			HandleExport(http.ResponseWriter, *http.Request)
+		}
+		if s, ok := kb.ExchangeService.(exporter); ok {
+			s.HandleExport(w, r)
+		}
+	}).Methods("POST")
+
+	apiV1.HandleFunc("/exchange/import", func(w http.ResponseWriter, r *http.Request) {
+		if kb.ExchangeService == nil {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusServiceUnavailable)
+			w.Write([]byte(`{"error":"exchange service not initialized"}`))
+			return
+		}
+		type importer interface {
+			HandleImport(http.ResponseWriter, *http.Request)
+		}
+		if s, ok := kb.ExchangeService.(importer); ok {
+			s.HandleImport(w, r)
+		}
+	}).Methods("POST")
+
+	logger.Info("[EXCHANGE] Routes registered at /api/v1/exchange/{export,import}")
+
 }
 
 // createKBQueryFunc creates a query function that connects to OptimusDB's document stores

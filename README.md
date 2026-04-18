@@ -71,6 +71,7 @@ Key goals:
 - [Flags](#flags)
 - [Environment Variables](#environment-variables)
 - [HTTP API](#http-api)
+- [Backup and Restore process](docs/OptimusDB_BackupRestore.md)
 - [Development Notes](#development-notes)
 - [Research Contribution / Beyond State of the Art](#research-contribution--beyond-state-of-the-art)
 - [Contributing](#contributing)
