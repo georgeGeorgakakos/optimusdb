@@ -86,8 +86,8 @@ The export sequence is:
 3. **Acquire service mutex** (serialises concurrent exports and blocks a racing import).
 4. **SQLite snapshot**: `VACUUM INTO` writes a consistent copy of the database to a fresh temp file. This is safe while other requests are reading or writing — SQLite holds a brief read lock, and the snapshot includes `sqlite-vec` shadow tables verbatim.
 5. **OrbitDB iteration**: for each non-nil document store, `Query(ctx, filter-all)` returns every live document. Results are JSON-encoded, one per line, into an in-memory buffer per store.
-6. **Stream archive**: `manifest.json` → `sqlite/optimusdb.db` → one `orbitdb/<name>.jsonl` per store, all wrapped in a `tar.gz` that streams directly into the HTTP response body. Nothing is buffered in memory except the per-store document list.
-    7. **Client** receives `application/gzip` with `Content-Disposition: attachment; filename="optimusdb-export-<UTC timestamp>.tar.gz"`.
+6. **Stream archive**: `manifest.json` → `sqlite/optimusdb.db` → one `orbitdb/'name'.jsonl` per store, all wrapped in a `tar.gz` that streams directly into the HTTP response body. Nothing is buffered in memory except the per-store document list.
+    7. **Client** receives `application/gzip` with `Content-Disposition: attachment; filename="optimusdb-export-'UTC timestamp'.tar.gz"`.
 
         Export does not block normal request traffic in any meaningful way. `VACUUM INTO` takes a brief read lock; OrbitDB `Query` does not lock writers.
 
@@ -101,7 +101,7 @@ The export sequence is:
 
         - **`manifest.json`** at the top level. Always read first by the importer. Contains version (currently `"1"`), creation timestamp, source node ID, the list of stores included, and a flag for whether SQLite is included.
         - **`sqlite/optimusdb.db`** — a full binary SQLite file. Because `VACUUM INTO` preserves all schemas, indexes, triggers, and `sqlite-vec` virtual-table shadow data, this single file is enough to reconstruct the entire relational side of the node.
-        - **`orbitdb/<store>.jsonl`** — one JSONL file per exported document store. Each line is a complete JSON-encoded document. A store that exists but contains zero documents becomes an empty file (still listed in the manifest).
+        - **`orbitdb/'store'.jsonl`** — one JSONL file per exported document store. Each line is a complete JSON-encoded document. A store that exists but contains zero documents becomes an empty file (still listed in the manifest).
 
             The archive is `tar.gz` — the most universally available compressed-archive format, openable on every Unix-like system, every container base image, and by `tar` on recent Windows.
 
