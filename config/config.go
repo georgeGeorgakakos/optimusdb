@@ -16,6 +16,15 @@ type Config struct {
 	DsswresalocStoreAddr   string `json:"dsswresalocStoreAddr"`
 	PeerID                 string `json:"peerID"`
 	TOSCAImportedStoreAddr string `json:"toscaImportedStoreAddr"`
+
+	// Additional stores initialized at startup — see app/initPeer.go.
+	// These were added so the chat pipeline's create-11-stores logic has
+	// real docstores to bind to, rather than nil pointers.
+	WhoiswhoStoreAddr            string `json:"whoiswhoStoreAddr"`
+	TOSCAADTStoreAddr            string `json:"toscaAdtStoreAddr"`
+	TOSCACapacitiesStoreAddr     string `json:"toscaCapacitiesStoreAddr"`
+	TOSCADeploymentPlanStoreAddr string `json:"toscaDeploymentPlanStoreAddr"`
+	TOSCAEventHistoryStoreAddr   string `json:"toscaEventHistoryStoreAddr"`
 }
 
 // LoadConfig loads the persistent config file into config struct
@@ -44,6 +53,15 @@ func LoadConfig() (*Config, error) {
 				//
 				DsswresStoreAddr:     "dsswres",
 				DsswresalocStoreAddr: "dsswresaloc",
+				//
+				// Additional stores — short names on first boot; will be
+				// replaced with real OrbitDB addresses after orbit.Open().
+				WhoiswhoStoreAddr:            "whoiswho",
+				TOSCAImportedStoreAddr:       "tosca_imported",
+				TOSCAADTStoreAddr:            "tosca_adt",
+				TOSCACapacitiesStoreAddr:     "tosca_capacities",
+				TOSCADeploymentPlanStoreAddr: "tosca_deploymentplan",
+				TOSCAEventHistoryStoreAddr:   "tosca_eventhistory",
 				//
 				PeerID: "",
 			}

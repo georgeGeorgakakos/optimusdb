@@ -2,7 +2,7 @@
 # Git Push Script - OptimusDB (Swarmchestrate)
 # ============================================
 
-$EXPECTED_DIR    = "C:\Users\georg\GolandProjects\optimusdb"
+$EXPECTED_DIR    = "C:\Users\georg\GolandProjects\optimusdb-lsa"
 $REMOTE_NAME     = "origin"
 $REMOTE_URL      = "https://github.com/Swarmchestrate/optimusdb.git"
 

@@ -443,6 +443,180 @@ func InitPeer(knowledgeBaseDB *KnowledgeBaseDB, rdbms *KnowledgeBaseSQLite, benc
 		conf.TOSCAImportedStoreAddr = db.Address().String()
 	}
 
+	// ####################### dsswresaloc Store ###########################
+	// Resource allocations (companion to dsswres).
+	cacheStore = filepath.Join(cache, "dsswresaloc")
+	logger.Debug("[DEBUG] : OptimusDB instance dsswresaloc")
+	logger.Debug("[DEBUG] : docstore %s ", cacheStore)
+
+	dbopts = orbitdb.CreateDBOptions{
+		Create:            boolPtr(true),
+		StoreType:         stringPtr("docstore"),
+		StoreSpecificOpts: docstoreOpt,
+		Overwrite:         boolPtr(false),
+		AccessController:  fullRW,
+		Directory:         &cacheStore,
+		Replicate:         boolPtr(true),
+		EventBus:          eventbus.NewBus(),
+		Timeout:           setTimeOut(5),
+	}
+
+	store, err = orbit.Open(ctx, conf.DsswresalocStoreAddr, &dbopts)
+	if err != nil {
+		logger.Error("[ERROR] Try resolving it by connecting to a peer, DsswresalocStoreAddr %v", err)
+	} else {
+		db := store.(iface.DocumentStore)
+		db.Load(ctx, -1)
+		knowledgeBaseDB.DsSWresaloc = &db
+		logger.Debug("[DEBUG] dsswresaloc store: %s", db.Address().String())
+		conf.DsswresalocStoreAddr = db.Address().String()
+	}
+
+	// ####################### whoiswho Store ###########################
+	// Identity and role metadata for peers and services.
+	whoiswhoCache := filepath.Join(cache, "whoiswho")
+	logger.Debug("[DEBUG] : OptimusDB instance whoiswho")
+	logger.Debug("[DEBUG] : docstore %s ", whoiswhoCache)
+
+	dbopts = orbitdb.CreateDBOptions{
+		Create:            boolPtr(true),
+		StoreType:         stringPtr("docstore"),
+		StoreSpecificOpts: docstoreOpt,
+		Overwrite:         boolPtr(false),
+		AccessController:  fullRW,
+		Directory:         &whoiswhoCache,
+		Replicate:         boolPtr(true),
+		EventBus:          eventbus.NewBus(),
+		Timeout:           setTimeOut(5),
+	}
+
+	store, err = orbit.Open(ctx, conf.WhoiswhoStoreAddr, &dbopts)
+	if err != nil {
+		logger.Error("[ERROR] Try resolving it by connecting to a peer, WhoiswhoStoreAddr %v", err)
+	} else {
+		db := store.(iface.DocumentStore)
+		db.Load(ctx, -1)
+		knowledgeBaseDB.WhoiswhoStore = &db
+		logger.Debug("[DEBUG] whoiswho store: %s", db.Address().String())
+		conf.WhoiswhoStoreAddr = db.Address().String()
+	}
+
+	// ####################### TOSCA ADT Store ###########################
+	// TOSCA application descriptor templates — topology, node templates, policies.
+	toscaADTCache := filepath.Join(cache, "tosca_adt")
+	logger.Debug("[DEBUG] : OptimusDB instance tosca_adt")
+	logger.Debug("[DEBUG] : docstore %s ", toscaADTCache)
+
+	dbopts = orbitdb.CreateDBOptions{
+		Create:            boolPtr(true),
+		StoreType:         stringPtr("docstore"),
+		StoreSpecificOpts: docstoreOpt,
+		Overwrite:         boolPtr(false),
+		AccessController:  fullRW,
+		Directory:         &toscaADTCache,
+		Replicate:         boolPtr(true),
+		EventBus:          eventbus.NewBus(),
+		Timeout:           setTimeOut(5),
+	}
+
+	store, err = orbit.Open(ctx, conf.TOSCAADTStoreAddr, &dbopts)
+	if err != nil {
+		logger.Error("[ERROR] Try resolving it by connecting to a peer, TOSCAADTStoreAddr %v", err)
+	} else {
+		db := store.(iface.DocumentStore)
+		db.Load(ctx, -1)
+		knowledgeBaseDB.DsTOSCA_ADT = &db
+		logger.Debug("[DEBUG] TOSCA ADT store: %s", db.Address().String())
+		conf.TOSCAADTStoreAddr = db.Address().String()
+	}
+
+	// ####################### TOSCA Capacities Store ###########################
+	// Compute / memory / storage requirements — fields: num_cpus, mem_size, etc.
+	toscaCapsCache := filepath.Join(cache, "tosca_capacities")
+	logger.Debug("[DEBUG] : OptimusDB instance tosca_capacities")
+	logger.Debug("[DEBUG] : docstore %s ", toscaCapsCache)
+
+	dbopts = orbitdb.CreateDBOptions{
+		Create:            boolPtr(true),
+		StoreType:         stringPtr("docstore"),
+		StoreSpecificOpts: docstoreOpt,
+		Overwrite:         boolPtr(false),
+		AccessController:  fullRW,
+		Directory:         &toscaCapsCache,
+		Replicate:         boolPtr(true),
+		EventBus:          eventbus.NewBus(),
+		Timeout:           setTimeOut(5),
+	}
+
+	store, err = orbit.Open(ctx, conf.TOSCACapacitiesStoreAddr, &dbopts)
+	if err != nil {
+		logger.Error("[ERROR] Try resolving it by connecting to a peer, TOSCACapacitiesStoreAddr %v", err)
+	} else {
+		db := store.(iface.DocumentStore)
+		db.Load(ctx, -1)
+		knowledgeBaseDB.DsTOSCA_Capacities = &db
+		logger.Debug("[DEBUG] TOSCA Capacities store: %s", db.Address().String())
+		conf.TOSCACapacitiesStoreAddr = db.Address().String()
+	}
+
+	// ####################### TOSCA Deployment Plan Store ###########################
+	// Scheduled deployment plans derived from TOSCA ADTs.
+	toscaDplanCache := filepath.Join(cache, "tosca_deploymentplan")
+	logger.Debug("[DEBUG] : OptimusDB instance tosca_deploymentplan")
+	logger.Debug("[DEBUG] : docstore %s ", toscaDplanCache)
+
+	dbopts = orbitdb.CreateDBOptions{
+		Create:            boolPtr(true),
+		StoreType:         stringPtr("docstore"),
+		StoreSpecificOpts: docstoreOpt,
+		Overwrite:         boolPtr(false),
+		AccessController:  fullRW,
+		Directory:         &toscaDplanCache,
+		Replicate:         boolPtr(true),
+		EventBus:          eventbus.NewBus(),
+		Timeout:           setTimeOut(5),
+	}
+
+	store, err = orbit.Open(ctx, conf.TOSCADeploymentPlanStoreAddr, &dbopts)
+	if err != nil {
+		logger.Error("[ERROR] Try resolving it by connecting to a peer, TOSCADeploymentPlanStoreAddr %v", err)
+	} else {
+		db := store.(iface.DocumentStore)
+		db.Load(ctx, -1)
+		knowledgeBaseDB.DsTOSCA_DeploymentPlan = &db
+		logger.Debug("[DEBUG] TOSCA DeploymentPlan store: %s", db.Address().String())
+		conf.TOSCADeploymentPlanStoreAddr = db.Address().String()
+	}
+
+	// ####################### TOSCA Event History Store ###########################
+	// Runtime events and lifecycle transitions for TOSCA deployments.
+	toscaEvtCache := filepath.Join(cache, "tosca_eventhistory")
+	logger.Debug("[DEBUG] : OptimusDB instance tosca_eventhistory")
+	logger.Debug("[DEBUG] : docstore %s ", toscaEvtCache)
+
+	dbopts = orbitdb.CreateDBOptions{
+		Create:            boolPtr(true),
+		StoreType:         stringPtr("docstore"),
+		StoreSpecificOpts: docstoreOpt,
+		Overwrite:         boolPtr(false),
+		AccessController:  fullRW,
+		Directory:         &toscaEvtCache,
+		Replicate:         boolPtr(true),
+		EventBus:          eventbus.NewBus(),
+		Timeout:           setTimeOut(5),
+	}
+
+	store, err = orbit.Open(ctx, conf.TOSCAEventHistoryStoreAddr, &dbopts)
+	if err != nil {
+		logger.Error("[ERROR] Try resolving it by connecting to a peer, TOSCAEventHistoryStoreAddr %v", err)
+	} else {
+		db := store.(iface.DocumentStore)
+		db.Load(ctx, -1)
+		knowledgeBaseDB.DsTOSCA_EventHistory = &db
+		logger.Debug("[DEBUG] TOSCA EventHistory store: %s", db.Address().String())
+		conf.TOSCAEventHistoryStoreAddr = db.Address().String()
+	}
+
 	//########################################################################
 	knowledgeBaseDB.Config = conf
 	if bench != nil {
