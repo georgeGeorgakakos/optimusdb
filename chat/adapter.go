@@ -752,3 +752,5 @@ func (a *KnowledgeBaseAdapter) getDefaultSchema(dstype string) *SchemaInfo {
 		LastUpdated: time.Now(),
 	}
 }
+
+// Current Date change
