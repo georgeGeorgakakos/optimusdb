@@ -129,13 +129,26 @@ func NewKnowledgeBaseAdapter(config AdapterConfig) *KnowledgeBaseAdapter {
 
 // TranslateQuery translates natural language to query without executing
 func (a *KnowledgeBaseAdapter) TranslateQuery(ctx context.Context, prompt string, dstype string) (*NLQueryResult, error) {
-	logger.Info("[CHAT-ADAPTER] Translating query: %s (dstype: %s)", truncateString(prompt, 50), dstype)
+	logger.Info("[CHAT-ADAPTER] Translating query: %s (dstype: %s)", truncateString(prompt, 100), dstype)
+	logger.Debug("[CHAT-ADAPTER] LLM endpoint: %s", a.tinyllamaURL)
 
+	translationStart := time.Now()
 	cmd, cmdType, criteria, err := a.translateWithTinyLlama(ctx, prompt, dstype)
+	translationTime := time.Since(translationStart)
+
 	if err != nil {
-		logger.Warn("[CHAT-ADAPTER] TinyLlama translation failed: %v, using fallback", err)
+		logger.Warn("[CHAT-ADAPTER] TinyLlama translation failed after %v: %v — using fallback", translationTime, err)
 		cmd, cmdType, criteria = a.fallbackTranslation(prompt, dstype)
+		logger.Info("[CHAT-ADAPTER] Fallback produced: cmd=%s cmdType=%s", cmd, cmdType)
+	} else {
+		logger.Info("[CHAT-ADAPTER] LLM translation completed in %v", translationTime)
 	}
+
+	// Log the translated criteria so operators can see what the LLM produced.
+	// This is the single most useful diagnostic line when debugging wrong results:
+	// it shows exactly what field names, operators, and values the LLM chose.
+	criteriaJSON, _ := json.Marshal(criteria)
+	logger.Info("[CHAT-ADAPTER] Translated: cmd=%s cmdType=%s criteria=%s", cmd, cmdType, string(criteriaJSON))
 
 	return &NLQueryResult{
 		OriginalPrompt: prompt,
@@ -148,7 +161,7 @@ func (a *KnowledgeBaseAdapter) TranslateQuery(ctx context.Context, prompt string
 
 // ExecuteQuery translates and executes the query
 func (a *KnowledgeBaseAdapter) ExecuteQuery(ctx context.Context, prompt string, dstype string) (*NLQueryResult, error) {
-	logger.Info("[CHAT-ADAPTER] Executing query: %s (dstype: %s)", truncateString(prompt, 50), dstype)
+	logger.Info("[CHAT-ADAPTER] ExecuteQuery called: %s (dstype: %s)", truncateString(prompt, 100), dstype)
 
 	result, err := a.TranslateQuery(ctx, prompt, dstype)
 	if err != nil {
@@ -163,6 +176,8 @@ func (a *KnowledgeBaseAdapter) ExecuteQuery(ctx context.Context, prompt string, 
 			criteria = c
 		}
 
+		logger.Debug("[CHAT-ADAPTER] Executing against store=%s with %d criteria", dstype, len(criteria))
+
 		results, err := a.queryFunc(ctx, dstype, criteria)
 		if err != nil {
 			result.Error = err.Error()
@@ -175,6 +190,15 @@ func (a *KnowledgeBaseAdapter) ExecuteQuery(ctx context.Context, prompt string, 
 		result.ExecutionTime = time.Since(start)
 
 		logger.Info("[CHAT-ADAPTER] Query returned %d results in %v", result.ResultCount, result.ExecutionTime)
+
+		// Log first result ID for traceability (helps confirm the right store was queried)
+		if len(results) > 0 {
+			if id, ok := results[0]["_id"]; ok {
+				logger.Debug("[CHAT-ADAPTER] First result _id: %v", id)
+			}
+		}
+	} else {
+		logger.Warn("[CHAT-ADAPTER] queryFunc is nil — cannot execute, returning translation only")
 	}
 
 	return result, nil
@@ -186,6 +210,7 @@ func (a *KnowledgeBaseAdapter) GetSchema(ctx context.Context, dstype string) (*S
 	if cached, ok := a.schemaCache[dstype]; ok {
 		if time.Since(cached.LastUpdated) < a.schemaTTL {
 			a.schemaCacheMu.RUnlock()
+			logger.Debug("[CHAT-ADAPTER] Schema cache hit for %s", dstype)
 			return cached, nil
 		}
 	}
@@ -219,6 +244,10 @@ func (a *KnowledgeBaseAdapter) GetAvailableDatasets() []DatasetInfo {
 func (a *KnowledgeBaseAdapter) translateWithTinyLlama(ctx context.Context, prompt string, dstype string) (string, string, []map[string]interface{}, error) {
 	systemPrompt := buildTranslationPrompt(dstype)
 
+	// Request body uses the OpenAI-compatible format that llama-server
+	// serves at /v1/chat/completions. The "model" field is ignored by
+	// llama-server (it always uses the loaded model) but is required by
+	// the schema, so we include it for spec compliance.
 	reqBody := map[string]interface{}{
 		"model": "tinyllama",
 		"messages": []map[string]string{
@@ -235,19 +264,29 @@ func (a *KnowledgeBaseAdapter) translateWithTinyLlama(ctx context.Context, promp
 		return "", "", nil, err
 	}
 
+	logger.Debug("[CHAT-LLM] Sending request to %s (prompt length: %d chars, system prompt: %d chars)",
+		a.tinyllamaURL, len(prompt), len(systemPrompt))
+
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, a.tinyllamaURL, strings.NewReader(string(jsonBody)))
 	if err != nil {
 		return "", "", nil, err
 	}
 	req.Header.Set("Content-Type", "application/json")
 
+	llmStart := time.Now()
 	resp, err := a.client.Do(req)
+	llmLatency := time.Since(llmStart)
+
 	if err != nil {
+		logger.Error("[CHAT-LLM] HTTP request failed after %v: %v", llmLatency, err)
 		return "", "", nil, fmt.Errorf("TinyLlama request failed: %w", err)
 	}
 	defer resp.Body.Close()
 
+	logger.Debug("[CHAT-LLM] HTTP response: status=%d latency=%v", resp.StatusCode, llmLatency)
+
 	if resp.StatusCode != http.StatusOK {
+		logger.Error("[CHAT-LLM] Non-200 status: %d", resp.StatusCode)
 		return "", "", nil, fmt.Errorf("TinyLlama returned status %d", resp.StatusCode)
 	}
 
@@ -260,10 +299,12 @@ func (a *KnowledgeBaseAdapter) translateWithTinyLlama(ctx context.Context, promp
 	// We try OpenAI format first (llama-server), then fall back to Ollama.
 	var raw map[string]interface{}
 	if err := json.NewDecoder(resp.Body).Decode(&raw); err != nil {
+		logger.Error("[CHAT-LLM] Failed to decode JSON response: %v", err)
 		return "", "", nil, fmt.Errorf("decode LLM response: %w", err)
 	}
 
 	var content string
+	var responseFormat string
 
 	// Try OpenAI format: choices[0].message.content
 	if choices, ok := raw["choices"].([]interface{}); ok && len(choices) > 0 {
@@ -271,6 +312,7 @@ func (a *KnowledgeBaseAdapter) translateWithTinyLlama(ctx context.Context, promp
 			if msg, ok := choice["message"].(map[string]interface{}); ok {
 				if c, ok := msg["content"].(string); ok {
 					content = c
+					responseFormat = "openai"
 				}
 			}
 		}
@@ -281,15 +323,30 @@ func (a *KnowledgeBaseAdapter) translateWithTinyLlama(ctx context.Context, promp
 		if msg, ok := raw["message"].(map[string]interface{}); ok {
 			if c, ok := msg["content"].(string); ok {
 				content = c
+				responseFormat = "ollama"
 			}
 		}
 	}
 
 	if content == "" {
+		logger.Error("[CHAT-LLM] No content found in LLM response (tried OpenAI + Ollama formats)")
+		logger.Debug("[CHAT-LLM] Raw response keys: %v", func() []string {
+			keys := make([]string, 0, len(raw))
+			for k := range raw {
+				keys = append(keys, k)
+			}
+			return keys
+		}())
 		return "", "", nil, fmt.Errorf("no content in LLM response")
 	}
 
+	logger.Info("[CHAT-LLM] Raw LLM output (%s format, %d chars): %s",
+		responseFormat, len(content), truncateString(content, 500))
+
 	cmd, cmdType, criteria := parseTranslationResponse(content)
+
+	logger.Debug("[CHAT-LLM] Parsed: cmd=%s cmdType=%s criteriaCount=%d", cmd, cmdType, len(criteria))
+
 	return cmd, cmdType, criteria, nil
 }
 
@@ -384,6 +441,7 @@ func parseTranslationResponse(response string) (string, string, []map[string]int
 	response = strings.TrimSpace(response)
 
 	if strings.Contains(response, "```") {
+		logger.Debug("[CHAT-LLM] Stripping markdown code fences from LLM output")
 		start := strings.Index(response, "{")
 		end := strings.LastIndex(response, "}")
 		if start >= 0 && end > start {
@@ -397,6 +455,8 @@ func parseTranslationResponse(response string) (string, string, []map[string]int
 	}
 
 	if err := json.Unmarshal([]byte(response), &parsed); err != nil {
+		logger.Warn("[CHAT-LLM] Failed to parse LLM output as JSON: %v", err)
+		logger.Debug("[CHAT-LLM] Unparseable output was: %s", truncateString(response, 300))
 		return "get", "crudget", nil
 	}
 
@@ -428,6 +488,7 @@ func (a *KnowledgeBaseAdapter) fallbackTranslation(prompt string, dstype string)
 			"operator": "==",
 			"value":    "solar",
 		})
+		logger.Debug("[CHAT-FALLBACK] Matched keyword 'solar' → resource_type==solar")
 	}
 	if strings.Contains(promptLower, "wind") {
 		criteria = append(criteria, map[string]interface{}{
@@ -435,6 +496,7 @@ func (a *KnowledgeBaseAdapter) fallbackTranslation(prompt string, dstype string)
 			"operator": "==",
 			"value":    "wind",
 		})
+		logger.Debug("[CHAT-FALLBACK] Matched keyword 'wind' → resource_type==wind")
 	}
 
 	locations := []string{"greece", "thessaloniki", "athens", "crete", "patras",
@@ -446,6 +508,7 @@ func (a *KnowledgeBaseAdapter) fallbackTranslation(prompt string, dstype string)
 				"operator": "contains",
 				"value":    loc,
 			})
+			logger.Debug("[CHAT-FALLBACK] Matched location '%s' → country contains %s", loc, loc)
 			break
 		}
 	}
@@ -459,6 +522,7 @@ func (a *KnowledgeBaseAdapter) fallbackTranslation(prompt string, dstype string)
 				"operator": "==",
 				"value":    st,
 			})
+			logger.Debug("[CHAT-FALLBACK] Matched status '%s' → status==%s", st, st)
 			break
 		}
 	}
@@ -472,12 +536,15 @@ func (a *KnowledgeBaseAdapter) fallbackTranslation(prompt string, dstype string)
 		strings.Contains(promptLower, "more than") || strings.Contains(promptLower, "at least") ||
 		strings.Contains(promptLower, "at most") {
 		cmdType = "crudquery"
+		logger.Debug("[CHAT-FALLBACK] Detected comparison keyword → cmdType=crudquery")
 	}
 
 	cmd := "get"
 	if cmdType == "crudquery" {
 		cmd = "query"
 	}
+
+	logger.Info("[CHAT-FALLBACK] Fallback result: cmd=%s criteriaCount=%d", cmd, len(criteria))
 	return cmd, cmdType, criteria
 }
 

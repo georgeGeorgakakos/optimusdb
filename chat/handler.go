@@ -148,19 +148,36 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	var req ChatRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		logger.Warn("[CHAT] Failed to decode request body: %v", err)
 		h.sendError(w, "Invalid request body", http.StatusBadRequest)
 		return
 	}
 
 	if strings.TrimSpace(req.Message) == "" {
+		logger.Debug("[CHAT] Received empty message — rejecting")
 		h.sendError(w, "Message cannot be empty", http.StatusBadRequest)
 		return
 	}
 
-	logger.Info("[CHAT] Processing message: %s", truncateString(req.Message, 100))
+	logger.Info("[CHAT] ════════════════ NEW QUERY ════════════════")
+	logger.Info("[CHAT] Message: %s", truncateString(req.Message, 200))
+	if len(req.ConversationHistory) > 0 {
+		logger.Debug("[CHAT] Conversation history: %d previous messages", len(req.ConversationHistory))
+	}
 
 	ctx := r.Context()
+	start := time.Now()
 	response := h.processMessage(ctx, req)
+	elapsed := time.Since(start)
+
+	logger.Info("[CHAT] ──── Response in %v ────", elapsed)
+	logger.Info("[CHAT] Result: type=%s dataset=%s cmd=%s count=%d confidence=%.1f",
+		response.Metadata.QueryType,
+		response.Metadata.DatasetType,
+		response.Metadata.ExecutedCmd,
+		response.Metadata.ResultCount,
+		response.Metadata.Confidence)
+	logger.Info("[CHAT] ════════════════ END QUERY ════════════════")
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(response)
@@ -177,6 +194,7 @@ func (h *Handler) processMessage(ctx context.Context, req ChatRequest) ChatRespo
 	messageLower := strings.ToLower(message)
 
 	intent := h.classifyIntent(messageLower)
+	logger.Debug("[CHAT] Intent classified as: %s", intent)
 
 	var response ChatResponse
 	response.Timestamp = time.Now().Format(time.RFC3339)
@@ -308,11 +326,13 @@ func (h *Handler) handleSchemaQuery(ctx context.Context, message string) ChatRes
 	dstype := h.inferDatasetType(message)
 	if dstype == "" {
 		dstype = h.config.DefaultDataset
+		logger.Debug("[CHAT] Schema query: no dataset inferred, using default: %s", dstype)
 	}
 	response.Metadata.DatasetType = dstype
 
 	schema, err := h.adapter.GetSchema(ctx, dstype)
 	if err != nil {
+		logger.Warn("[CHAT] Schema retrieval failed for %s: %v", dstype, err)
 		response.Response = fmt.Sprintf("I couldn't retrieve the schema information: %v\n\n"+
 			"Try asking about a specific table or dataset.", err)
 		return response
@@ -381,25 +401,34 @@ func (h *Handler) handleDataQuery(ctx context.Context, message string, history [
 		Metadata:  &ResponseMetadata{QueryType: "nlquery"},
 	}
 
+	// Step 1: Infer the target dataset
 	dstype := h.inferDatasetType(message)
 	if dstype == "" {
 		dstype = h.inferFromHistory(history)
+		if dstype != "" {
+			logger.Debug("[CHAT-QUERY] Dataset inferred from conversation history: %s", dstype)
+		}
 	}
 	if dstype == "" {
 		dstype = h.config.DefaultDataset
+		logger.Debug("[CHAT-QUERY] No dataset inferred — using default: %s", dstype)
 	}
 	response.Metadata.DatasetType = dstype
 
+	// Step 2: Translate and/or execute
 	var result *NLQueryResult
 	var err error
 
 	if h.config.EnableExecution {
+		logger.Debug("[CHAT-QUERY] Execution enabled — calling ExecuteQuery (translate + run)")
 		result, err = h.adapter.ExecuteQuery(ctx, message, dstype)
 	} else {
+		logger.Debug("[CHAT-QUERY] Execution disabled — calling TranslateQuery only")
 		result, err = h.adapter.TranslateQuery(ctx, message, dstype)
 	}
 
 	if err != nil {
+		logger.Error("[CHAT-QUERY] Query processing failed: %v", err)
 		response.Response = fmt.Sprintf("I had trouble processing that query: %v\n\n"+
 			"Could you try rephrasing? For example:\n"+
 			"• \"Show me all solar assets\"\n"+
@@ -407,6 +436,7 @@ func (h *Handler) handleDataQuery(ctx context.Context, message string, history [
 		return response
 	}
 
+	// Step 3: Format and return
 	response.Response = h.formatQueryResult(result)
 	response.Metadata.ExecutedCmd = result.TranslatedCmd
 	response.Metadata.ResultCount = result.ResultCount
@@ -459,57 +489,70 @@ func (h *Handler) inferDatasetType(message string) string {
 	if matched, _ := regexp.MatchString(
 		`\b(tosca|vcpu|vcpus|cpu|cpus|mem|memory|ram|gb|mb|vm|vms|gpu)\b`, message); matched {
 		// Numeric compute queries overwhelmingly target capacity profiles.
+		logger.Debug("[CHAT-ROUTER] Matched TOSCA capacities keywords → tosca_capacities")
 		return "tosca_capacities"
 	}
 	if matched, _ := regexp.MatchString(
 		`\b(deployment|deploy|deployed|rollout)\b`, message); matched {
+		logger.Debug("[CHAT-ROUTER] Matched deployment keywords → tosca_deploymentplan")
 		return "tosca_deploymentplan"
 	}
 	if matched, _ := regexp.MatchString(
 		`\b(event|history|timeline|lifecycle)\b`, message); matched {
+		logger.Debug("[CHAT-ROUTER] Matched event/history keywords → tosca_eventhistory")
 		return "tosca_eventhistory"
 	}
 	if matched, _ := regexp.MatchString(
 		`\b(adt|node[_ ]?template|topology|policy|application[_ ]?descriptor)\b`, message); matched {
+		logger.Debug("[CHAT-ROUTER] Matched ADT keywords → tosca_adt")
 		return "tosca_adt"
 	}
 	if matched, _ := regexp.MatchString(
 		`\b(imported|third[- ]?party)\b`, message); matched {
+		logger.Debug("[CHAT-ROUTER] Matched imported keywords → tosca_imported")
 		return "tosca_imported"
 	}
 
 	// Energy/resource domain — solar, wind, generation
 	if matched, _ := regexp.MatchString(
 		`\b(solar|pv|photovoltaic|panel)\b`, message); matched {
+		logger.Debug("[CHAT-ROUTER] Matched solar keywords → dsswres")
 		return "dsswres"
 	}
 	if matched, _ := regexp.MatchString(
 		`\b(wind|turbine|windmill)\b`, message); matched {
+		logger.Debug("[CHAT-ROUTER] Matched wind keywords → dsswres")
 		return "dsswres"
 	}
 	if matched, _ := regexp.MatchString(
 		`\b(renewable|generation|kwh|mwh)\b`, message); matched {
+		logger.Debug("[CHAT-ROUTER] Matched energy keywords → dsswres")
 		return "dsswres"
 	}
 	if matched, _ := regexp.MatchString(
 		`\b(allocation|allocated|schedule|scheduled|reservation)\b`, message); matched {
+		logger.Debug("[CHAT-ROUTER] Matched allocation keywords → dsswresaloc")
 		return "dsswresaloc"
 	}
 
 	// Knowledge-base housekeeping
 	if matched, _ := regexp.MatchString(
 		`\b(metadata|catalog|table|column|schema|field)\b`, message); matched {
+		logger.Debug("[CHAT-ROUTER] Matched metadata keywords → kbmetadata")
 		return "kbmetadata"
 	}
 	if matched, _ := regexp.MatchString(
 		`\b(validation|validate|verified|valid|invalid)\b`, message); matched {
+		logger.Debug("[CHAT-ROUTER] Matched validation keywords → validations")
 		return "validations"
 	}
 	if matched, _ := regexp.MatchString(
 		`\b(who|role|identity|directory|whoiswho)\b`, message); matched {
+		logger.Debug("[CHAT-ROUTER] Matched identity keywords → whoiswho")
 		return "whoiswho"
 	}
 
+	logger.Debug("[CHAT-ROUTER] No keyword matched — returning empty (will use default)")
 	return ""
 }
 
