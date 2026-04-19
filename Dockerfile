@@ -148,7 +148,7 @@ serverurl=unix:///var/run/supervisor.sock\n\
 supervisor.rpcinterface_factory=supervisor.rpcinterface:make_main_rpcinterface\n\
 \n\
 [program:tinyllama]\n\
-command=/usr/local/bin/llama-server -m /models/tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf -c 2048 --host 0.0.0.0 --port 8080 --n-gpu-layers 0 --embedding\n\
+command=/usr/local/bin/llama-server -m /models/tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf -c 2048 --host 0.0.0.0 --port 8080 --n-gpu-layers 0\n\
 autostart=true\n\
 autorestart=true\n\
 stdout_logfile=/var/log/supervisor/tinyllama.log\n\
@@ -166,7 +166,7 @@ stderr_logfile=/var/log/supervisor/optimusdb_info.log\n\
 priority=2\n\
 startretries=3\n\
 startsecs=20\n\
-environment=TINYLLAMA_ENDPOINT="http://127.0.0.1:8080/v1/completions",TINYLLAMA_EMBEDDING_ENDPOINT="http://127.0.0.1:8080/embedding"\n\
+environment=TINYLLAMA_URL="http://127.0.0.1:8080/v1/chat/completions",TINYLLAMA_ENDPOINT="http://127.0.0.1:8080/v1/completions",TINYLLAMA_EMBEDDING_ENDPOINT="http://127.0.0.1:8080/embedding"\n\
 \n\
 [group:optimusdb-suite]\n\
 programs=tinyllama,optimusdb\n' > /etc/supervisor/conf.d/supervisord.conf

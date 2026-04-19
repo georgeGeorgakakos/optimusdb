@@ -251,17 +251,45 @@ func (a *KnowledgeBaseAdapter) translateWithTinyLlama(ctx context.Context, promp
 		return "", "", nil, fmt.Errorf("TinyLlama returned status %d", resp.StatusCode)
 	}
 
-	var llmResp struct {
-		Message struct {
-			Content string `json:"content"`
-		} `json:"message"`
+	// Parse the response — supports both formats so this adapter works
+	// with Ollama (/api/chat) and llama-server (/v1/chat/completions):
+	//
+	//   Ollama:       {"message": {"content": "..."}}
+	//   llama-server: {"choices": [{"message": {"content": "..."}}]}
+	//
+	// We try OpenAI format first (llama-server), then fall back to Ollama.
+	var raw map[string]interface{}
+	if err := json.NewDecoder(resp.Body).Decode(&raw); err != nil {
+		return "", "", nil, fmt.Errorf("decode LLM response: %w", err)
 	}
 
-	if err := json.NewDecoder(resp.Body).Decode(&llmResp); err != nil {
-		return "", "", nil, err
+	var content string
+
+	// Try OpenAI format: choices[0].message.content
+	if choices, ok := raw["choices"].([]interface{}); ok && len(choices) > 0 {
+		if choice, ok := choices[0].(map[string]interface{}); ok {
+			if msg, ok := choice["message"].(map[string]interface{}); ok {
+				if c, ok := msg["content"].(string); ok {
+					content = c
+				}
+			}
+		}
 	}
 
-	cmd, cmdType, criteria := parseTranslationResponse(llmResp.Message.Content)
+	// Fall back to Ollama format: message.content
+	if content == "" {
+		if msg, ok := raw["message"].(map[string]interface{}); ok {
+			if c, ok := msg["content"].(string); ok {
+				content = c
+			}
+		}
+	}
+
+	if content == "" {
+		return "", "", nil, fmt.Errorf("no content in LLM response")
+	}
+
+	cmd, cmdType, criteria := parseTranslationResponse(content)
 	return cmd, cmdType, criteria, nil
 }
 
