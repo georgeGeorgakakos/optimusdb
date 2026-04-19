@@ -1320,11 +1320,11 @@ spec:
               mountPath: /var/lib/optimusdb
           resources:
             limits:
-              memory: "768Mi"
-              cpu: "500m"
+              memory: "1024Mi"
+              cpu: "2000m"
             requests:
-              memory: "384Mi"
-              cpu: "100m"
+              memory: "512Mi"
+              cpu: "500m"
       volumes:
         - name: data
           persistentVolumeClaim:
@@ -1498,11 +1498,11 @@ spec:
               mountPath: /var/lib/optimusdb
           resources:
             limits:
-              memory: "768Mi"
-              cpu: "500m"
+              memory: "1024Mi"
+              cpu: "2000m"
             requests:
-              memory: "384Mi"
-              cpu: "100m"
+              memory: "512Mi"
+              cpu: "500m"
       volumes:
         - name: data
           persistentVolumeClaim:
@@ -1676,11 +1676,11 @@ spec:
               mountPath: /var/lib/optimusdb
           resources:
             limits:
-              memory: "768Mi"
-              cpu: "500m"
+              memory: "1024Mi"
+              cpu: "2000m"
             requests:
-              memory: "384Mi"
-              cpu: "100m"
+              memory: "512Mi"
+              cpu: "500m"
       volumes:
         - name: data
           persistentVolumeClaim:
@@ -1847,11 +1847,11 @@ spec:
             - "metadata_service.metadata_wsgi"
           resources:
             limits:
-              memory: "768Mi"
-              cpu: "500m"
+              memory: "1024Mi"
+              cpu: "2000m"
             requests:
-              memory: "384Mi"
-              cpu: "100m"
+              memory: "512Mi"
+              cpu: "500m"
           readinessProbe:
             httpGet:
               path: /healthcheck
@@ -2020,11 +2020,11 @@ spec:
               mountPath: /app-files
           resources:
             limits:
-              memory: "768Mi"
-              cpu: "500m"
+              memory: "1024Mi"
+              cpu: "2000m"
             requests:
-              memory: "384Mi"
-              cpu: "100m"
+              memory: "512Mi"
+              cpu: "500m"
           readinessProbe:
             httpGet:
               path: /healthcheck
