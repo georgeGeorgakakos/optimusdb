@@ -46,6 +46,7 @@ Key goals:
 - [Query Engine and Optimization](docs/OptimusDB_QueryEngineOptimization.md)
 - [Semantic Search Engine](docs/OptimusDB_SemanticSearch.md)
 - [Natural Language Query Pipeline Engine](docs/OptimusDB_NLUpipiline.md)
+- [How OptimusDB translates NL to DB queries](docs/OptimusDB_NLtoDBQ.md)
 - [Embeddings as a Service](docs/OptimusDB_Embeddings.md)
 - [Embeddings and Semantic Search scenarios](docs/OptimusDB_Semantic_Embedings_Examples.md)
 - [Semantic Search over TOSCA 2.0 Artifacts](docs/OptimusDB_SemanticSearchoverTOSCA.md)

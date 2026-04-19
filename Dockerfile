@@ -148,7 +148,7 @@ serverurl=unix:///var/run/supervisor.sock\n\
 supervisor.rpcinterface_factory=supervisor.rpcinterface:make_main_rpcinterface\n\
 \n\
 [program:tinyllama]\n\
-command=/usr/local/bin/llama-server -m /models/tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf -c 2048 --host 0.0.0.0 --port 8080 --n-gpu-layers 0\n\
+command=/usr/local/bin/llama-server -m /models/tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf -c 512 --host 0.0.0.0 --port 8080 --n-gpu-layers 0\n\
 autostart=true\n\
 autorestart=true\n\
 stdout_logfile=/var/log/supervisor/tinyllama.log\n\

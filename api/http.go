@@ -1744,7 +1744,7 @@ func RegisterMetadataRoutes(router *mux.Router, kb *app.KnowledgeBaseDB) {
 			{Type: "tosca_eventhistory", Name: "TOSCA event history",
 				Description: "Runtime events and lifecycle transitions for TOSCA deployments"},
 		},
-		Timeout:   30 * time.Second,
+		Timeout:   90 * time.Second,
 		SchemaTTL: 5 * time.Minute,
 	}
 

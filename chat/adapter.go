@@ -91,7 +91,7 @@ func DefaultAdapterConfig() AdapterConfig {
 			{Type: "tosca_eventhistory", Name: "TOSCA event history",
 				Description: "Runtime events and lifecycle transitions for TOSCA deployments"},
 		},
-		Timeout:   60 * time.Second,
+		Timeout:   90 * time.Second,
 		SchemaTTL: 5 * time.Minute,
 	}
 }
@@ -350,91 +350,114 @@ func (a *KnowledgeBaseAdapter) translateWithTinyLlama(ctx context.Context, promp
 	return cmd, cmdType, criteria, nil
 }
 
-// buildTranslationPrompt constructs the system prompt that teaches the LLM
-// how to translate a natural-language question into OptimusDB query criteria.
+// buildTranslationPrompt constructs a FOCUSED system prompt for the LLM.
 //
 // Design notes:
-//   - Each dataset has explicit field hints so the model can pick valid field
-//     names rather than inventing them.
-//   - Numeric-operator examples (>=, >, <=) are worked in directly, with
-//     types shown correctly (numbers unquoted, strings quoted) — TinyLlama
-//     is small enough that example coverage is how we get reliability.
-//   - The example for "find applications with at least 2 vCPUs and more
-//     than 2GB memory" is included verbatim because that is the specific
-//     query shape the OptimusDB chat endpoint is expected to handle.
+//   - The prompt is store-specific: it only includes field hints and one
+//     worked example for the dataset that the keyword router already
+//     selected. This is critical for performance — TinyLlama 1.1B on CPU
+//     processes ~480ms per input token, so an 800-token prompt takes ~6
+//     minutes while a 160-token prompt takes ~75 seconds.
+//   - The response format and rules are kept minimal — just enough for
+//     the model to produce valid JSON with the right operator syntax.
+//   - One example per store teaches the model the exact JSON shape.
+//     More examples don't improve TinyLlama's accuracy but do increase
+//
+/*
+What the prompt does
+	It tells the LLM four things:
+
+	"translate questions to JSON query criteria"
+	The fields that exist — num_cpus, mem_size_mb, storage_gb (so it doesn't invent cpu_count or memory)
+	The output format — {"command":"query","criteria":[{"field":"...","operator":"...","value":...}]}
+	A worked example — "here's a question like yours and here's exactly the JSON I want back"
+
+	Every token in that prompt must pass through all 22 layers of the neural network before the model generates a
+	single output token. This is called prompt evaluation — the most expensive step.
+	llm_load_print_meta: n_layer = 22 , TinyLlama 1.1B was built
+	Each layer is a transformer block — it contains an attention mechanism and a feed-forward network.
+	When the model processes your prompt, every single token passes through all 22 layers sequentially.
+	Layer 1 processes all tokens, passes the result to layer 2, which passes to layer 3, and so on through layer 22.
+	More tokens × more layers = more computation. You can't reduce the layers (that's baked into the model file),
+	but you can reduce the tokens (that's what we just did with the focused prompt).
+
+*/
 func buildTranslationPrompt(dstype string) string {
-	return fmt.Sprintf(`You translate natural-language questions into OptimusDB query criteria.
+	// Per-store field hints and examples — only the relevant one is sent
+	storeInfo := map[string]struct {
+		fields  string
+		example string
+	}{
+		"tosca_capacities": {
+			fields: "_id, num_cpus, mem_size, mem_size_mb, storage_gb, network_bandwidth_mbps, gpu_count",
+			example: `Q: "find applications with at least 2 vCPUs and more than 2GB memory"
+A: {"command":"query","criteria":[{"field":"num_cpus","operator":">=","value":2},{"field":"mem_size_mb","operator":">","value":2048}]}`,
+		},
+		"tosca_deploymentplan": {
+			fields: "_id, adt_ref, planned_at, target_agents, status",
+			example: `Q: "show deployments with status deployed"
+A: {"command":"query","criteria":[{"field":"status","operator":"==","value":"deployed"}]}`,
+		},
+		"tosca_eventhistory": {
+			fields: "_id, deployment_id, event_type, occurred_at",
+			example: `Q: "show events for deployment dep-001"
+A: {"command":"query","criteria":[{"field":"deployment_id","operator":"==","value":"dep-001"}]}`,
+		},
+		"tosca_adt": {
+			fields: "_id, node_templates, topology_template, policies",
+			example: `Q: "list all TOSCA templates"
+A: {"command":"get","criteria":[]}`,
+		},
+		"tosca_imported": {
+			fields: "_id, source, template_name, imported_at",
+			example: `Q: "list all imported templates"
+A: {"command":"get","criteria":[]}`,
+		},
+		"dsswres": {
+			fields: "_id, resource_name, resource_type, resource_provider, country, region, city, cpu_capacity, memory_capacity, storage_capacity, status, energy_type",
+			example: `Q: "show solar assets in Greece"
+A: {"command":"query","criteria":[{"field":"resource_type","operator":"==","value":"solar"},{"field":"country","operator":"==","value":"Greece"}]}`,
+		},
+		"dsswresaloc": {
+			fields: "_id, resource_id, allocated_to, start_time, end_time, priority",
+			example: `Q: "show allocations with priority above 5"
+A: {"command":"query","criteria":[{"field":"priority","operator":">","value":5}]}`,
+		},
+		"kbmetadata": {
+			fields: "_id, table_name, column_name, data_type, description, owner, tags",
+			example: `Q: "find columns with 'price' in the name"
+A: {"command":"query","criteria":[{"field":"column_name","operator":"contains","value":"price"}]}`,
+		},
+		"validations": {
+			fields: "_id, path, is_valid, vote_cnt",
+			example: `Q: "show valid records"
+A: {"command":"query","criteria":[{"field":"is_valid","operator":"==","value":true}]}`,
+		},
+		"whoiswho": {
+			fields: "_id, peer_id, role",
+			example: `Q: "find peers with role coordinator"
+A: {"command":"query","criteria":[{"field":"role","operator":"==","value":"coordinator"}]}`,
+		},
+		"kbdata": {
+			fields: "_id, table_name, row_data",
+			example: `Q: "list all data records"
+A: {"command":"get","criteria":[]}`,
+		},
+	}
 
-Dataset type: %s
+	// Look up the store; fall back to a generic prompt if unknown
+	info, ok := storeInfo[dstype]
+	if !ok {
+		info = storeInfo["kbdata"]
+	}
 
-=== DATASET FIELD HINTS ===
-dsswres / dsswresaloc: resource_provider, resource_name, resource_type,
-    resource_def, resource_nature, status, cpu_capacity, memory_capacity,
-    storage_capacity, country, region, city, energy_type
-tosca_adt: _id, node_templates, topology_template, policies
-tosca_imported: _id, source, template_name, imported_at
-tosca_capacities: _id, num_cpus, mem_size, mem_size_mb, storage_gb,
-    network_bandwidth_mbps, gpu_count
-tosca_deploymentplan: _id, adt_ref, planned_at, target_agents, status
-tosca_eventhistory: _id, deployment_id, event_type, occurred_at
-validations: _id, path, is_valid, vote_cnt
-kbmetadata: _id, table_name, column_name, data_type, description
-kbdata: _id, table_name, row_data
-
-=== RESPONSE FORMAT (JSON ONLY — no explanation, no markdown fences) ===
-{"command":"get|query", "criteria":[{"field":"...", "operator":"...", "value":...}]}
-
-Operators: "==", "!=", ">", ">=", "<", "<=", "contains"
-
-=== EXAMPLES ===
-
-Q: "list all TOSCA templates"
-A: {"command":"get", "criteria":[]}
-
-Q: "find applications with at least 2 vCPUs and more than 2GB memory"
-A: {"command":"query", "criteria":[
-     {"field":"num_cpus", "operator":">=", "value":2},
-     {"field":"mem_size_mb", "operator":">", "value":2048}
-   ]}
-
-Q: "show TOSCA deployments with status deployed"
-A: {"command":"query", "criteria":[
-     {"field":"status", "operator":"==", "value":"deployed"}
-   ]}
-
-Q: "find capacity profiles needing more than 4 CPUs"
-A: {"command":"query", "criteria":[
-     {"field":"num_cpus", "operator":">", "value":4}
-   ]}
-
-Q: "show solar assets in Greece"
-A: {"command":"query", "criteria":[
-     {"field":"resource_type", "operator":"==", "value":"solar"},
-     {"field":"country", "operator":"==", "value":"Greece"}
-   ]}
-
-Q: "wind resources with capacity between 1000 and 5000"
-A: {"command":"query", "criteria":[
-     {"field":"resource_type", "operator":"==", "value":"wind"},
-     {"field":"cpu_capacity", "operator":">=", "value":1000},
-     {"field":"cpu_capacity", "operator":"<=", "value":5000}
-   ]}
-
-Q: "anything in kbmetadata with 'price' in the column name"
-A: {"command":"query", "criteria":[
-     {"field":"column_name", "operator":"contains", "value":"price"}
-   ]}
-
-=== RULES ===
-- Output JSON only. No prose, no markdown code fences.
-- Use numbers without quotes for numeric values: 2 not "2".
-- Use strings with quotes for text values: "Greece" not Greece.
-- If the question is just "list" or "show all", return empty criteria [].
-- If a field is not in the DATASET FIELD HINTS above, choose the closest
-  existing field name — do not invent one.
-- Multiple conditions on the same field mean an AND (range queries).
-
-Respond with JSON only.`, dstype)
+	return fmt.Sprintf(`Translate the question to JSON query criteria.
+Dataset: %s
+Fields: %s
+Format: {"command":"get|query","criteria":[{"field":"...","operator":"...","value":...}]}
+Operators: ==, !=, >, >=, <, <=, contains
+%s
+Rules: JSON only. No prose. Numbers unquoted. Strings quoted. Empty criteria for list/show all.`, dstype, info.fields, info.example)
 }
 
 func parseTranslationResponse(response string) (string, string, []map[string]interface{}) {
@@ -752,5 +775,3 @@ func (a *KnowledgeBaseAdapter) getDefaultSchema(dstype string) *SchemaInfo {
 		LastUpdated: time.Now(),
 	}
 }
-
-// Current Date change
