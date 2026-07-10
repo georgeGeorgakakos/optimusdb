@@ -1,0 +1,220 @@
+{
+  "method": {
+    "cmd": "crudput"
+  },
+  "dstype": "dsswres",
+  "criteria": [
+    {
+      "_id": "suricata-20260710-000001",
+      "source": "suricata",
+      "event_type": "alert",
+      "timestamp": "2026-07-10T08:14:22.481Z",
+      "src_ip": "198.51.100.23",
+      "src_port": 51544,
+      "dest_ip": "192.0.2.10",
+      "dest_port": 443,
+      "proto": "TCP",
+      "alert": {
+        "signature_id": 2100498,
+        "signature": "GPL ATTACK_RESPONSE id check returned root",
+        "category": "Potentially Bad Traffic",
+        "severity": 1,
+        "action": "allowed"
+      },
+      "test_data": true
+    },
+    {
+      "_id": "suricata-20260710-000002",
+      "source": "suricata",
+      "event_type": "dns",
+      "timestamp": "2026-07-10T08:15:03.114Z",
+      "src_ip": "192.0.2.25",
+      "src_port": 53044,
+      "dest_ip": "192.0.2.53",
+      "dest_port": 53,
+      "proto": "UDP",
+      "dns": {
+        "type": "query",
+        "rrname": "updates.example.test",
+        "rrtype": "A"
+      },
+      "test_data": true
+    },
+    {
+      "_id": "suricata-20260710-000003",
+      "source": "suricata",
+      "event_type": "alert",
+      "timestamp": "2026-07-10T08:16:45.907Z",
+      "src_ip": "203.0.113.77",
+      "src_port": 41192,
+      "dest_ip": "192.0.2.20",
+      "dest_port": 22,
+      "proto": "TCP",
+      "alert": {
+        "signature_id": 2001219,
+        "signature": "ET SCAN Potential SSH Scan",
+        "category": "Attempted Information Leak",
+        "severity": 2,
+        "action": "allowed"
+      },
+      "test_data": true
+    },
+    {
+      "_id": "suricata-20260710-000004",
+      "source": "suricata",
+      "event_type": "http",
+      "timestamp": "2026-07-10T08:18:31.220Z",
+      "src_ip": "192.0.2.31",
+      "src_port": 60421,
+      "dest_ip": "198.51.100.80",
+      "dest_port": 80,
+      "proto": "TCP",
+      "http": {
+        "hostname": "portal.example.test",
+        "http_method": "GET",
+        "status": 200
+      },
+      "test_data": true
+    },
+    {
+      "_id": "wazuh-20260710-000001",
+      "source": "wazuh",
+      "timestamp": "2026-07-10T08:20:14.003Z",
+      "agent": {
+        "id": "001",
+        "name": "web-01",
+        "ip": "192.0.2.10"
+      },
+      "manager": {
+        "name": "wazuh-manager"
+      },
+      "rule": {
+        "id": "5710",
+        "level": 10,
+        "description": "sshd: Attempt to login using a non-existent user"
+      },
+      "decoder": {
+        "name": "sshd"
+      },
+      "data": {
+        "srcip": "203.0.113.77",
+        "srcuser": "admin"
+      },
+      "location": "/var/log/auth.log",
+      "test_data": true
+    },
+    {
+      "_id": "wazuh-20260710-000002",
+      "source": "wazuh",
+      "timestamp": "2026-07-10T08:21:09.544Z",
+      "agent": {
+        "id": "002",
+        "name": "db-01",
+        "ip": "192.0.2.11"
+      },
+      "manager": {
+        "name": "wazuh-manager"
+      },
+      "rule": {
+        "id": "550",
+        "level": 7,
+        "description": "Integrity checksum changed"
+      },
+      "decoder": {
+        "name": "syscheck"
+      },
+      "syscheck": {
+        "path": "/etc/ssh/sshd_config",
+        "event": "modified"
+      },
+      "test_data": true
+    },
+    {
+      "_id": "wazuh-20260710-000003",
+      "source": "wazuh",
+      "timestamp": "2026-07-10T08:22:40.190Z",
+      "agent": {
+        "id": "003",
+        "name": "workstation-01",
+        "ip": "192.0.2.50"
+      },
+      "manager": {
+        "name": "wazuh-manager"
+      },
+      "rule": {
+        "id": "100100",
+        "level": 4,
+        "description": "PowerShell process started"
+      },
+      "decoder": {
+        "name": "windows_eventchannel"
+      },
+      "data": {
+        "win": {
+          "eventdata": {
+            "image": "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe"
+          }
+        }
+      },
+      "test_data": true
+    },
+    {
+      "_id": "zeek-conn-20260710-000001",
+      "source": "zeek",
+      "log_type": "conn",
+      "timestamp": "2026-07-10T08:24:12.100Z",
+      "uid": "C8Tful1TvM3Zf5x8fl",
+      "proto": "tcp",
+      "service": "ssl",
+      "duration": 1.245,
+      "orig_bytes": 517,
+      "resp_bytes": 4218,
+      "conn_state": "SF",
+      "test_data": true,
+      "id": {
+        "orig_h": "192.0.2.25",
+        "orig_p": 49152,
+        "resp_h": "198.51.100.80",
+        "resp_p": 443
+      }
+    },
+    {
+      "_id": "zeek-conn-20260710-000002",
+      "source": "zeek",
+      "log_type": "conn",
+      "timestamp": "2026-07-10T08:25:49.620Z",
+      "uid": "C4HhYF3L6t2k9GQ1w",
+      "proto": "tcp",
+      "service": "ssh",
+      "duration": 0.032,
+      "orig_bytes": 0,
+      "resp_bytes": 0,
+      "conn_state": "S0",
+      "test_data": true,
+      "id": {
+        "orig_h": "203.0.113.45",
+        "orig_p": 60211,
+        "resp_h": "192.0.2.20",
+        "resp_p": 22
+      }
+    },
+    {
+      "_id": "zeek-dns-20260710-000001",
+      "source": "zeek",
+      "log_type": "dns",
+      "timestamp": "2026-07-10T08:27:05.331Z",
+      "uid": "C2dnsP7hQ9kLm4RtV",
+      "proto": "udp",
+      "query": "updates.example.test",
+      "qtype_name": "A",
+      "rcode_name": "NOERROR",
+      "test_data": true,
+      "id": {
+        "orig_h": "192.0.2.25",
+        "orig_p": 53211,
+        "resp_h": "192.0.2.53",
+        "resp_p": 53
+      }
+    }
+  ]
+}
