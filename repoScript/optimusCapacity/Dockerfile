@@ -23,7 +23,7 @@ COPY requirements.txt pyproject.toml ./
 COPY capacity_client.py ./
 RUN pip install --no-cache-dir -e ".[yaml]"
 
-COPY samples/ ./samples/
+COPY samples ./samples/
 COPY README.md EXAMPLE.md ./
 
 # Non-root: this client only makes outbound HTTP calls.
