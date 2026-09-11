@@ -106,7 +106,7 @@ CAP=$(python3 capacity_client.py reserve \
 ### Step 2 — submit the CDT
 
 ```bash
-python3 capacity_client.py submit-cdt "$CAP" --file sample_cdt.yaml
+python3 capacity_client.py submit-cdt "$CAP" --file samples/athens_gpu_pool.yaml
 ```
 
 Accepts `.yaml`, `.yml` or `.json`. Status flips from `reserved` to `active`.
@@ -191,7 +191,7 @@ python3 capacity_client.py flow \
   --capacity-type compute \
   --region        eu-gr-athens \
   --attr num_cpus=64 --attr gpu=A100 \
-  --file          sample_cdt.yaml \
+  --file          samples/athens_gpu_pool.yaml \
   --ra-url        http://localhost:18002
 ```
 
@@ -254,13 +254,28 @@ except CapacityError as exc:
 
 ```
 optimusCapacity/
-├── capacity_client.py   # client library + CLI
-├── sample_cdt.yaml      # example Capacity Description Template
-├── requirements.txt
-├── setup.sh             # Linux / macOS bootstrap
-├── setup.ps1            # Windows bootstrap
-└── README.md
+├── capacity_client.py        # client library + CLI
+├── pyproject.toml            # packaging, deps, console script
+├── requirements.txt          # runtime dependencies
+├── requirements-dev.txt      # + pytest
+├── setup.sh / setup.ps1      # bootstrap (creates .venv)
+├── Makefile                  # common tasks — make help
+├── Dockerfile                # containerised client
+├── .env.example              # configuration template
+├── LICENSE                   # MIT
+├── README.md                 # this file
+├── INSTALL.md                # full installation guide
+├── EXAMPLE.md                # four-step CP -> RA walkthrough
+├── CHANGELOG.md
+├── samples/
+│   ├── athens_gpu_pool.yaml  # compute CDT
+│   └── budapest_storage.yaml # storage CDT
+└── tests/
+    └── test_capacity_client.py   # 40 tests, no agent required
 ```
+
+Full installation options — venv, offline, Docker, troubleshooting — are in
+[INSTALL.md](INSTALL.md).
 
 ---
 

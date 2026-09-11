@@ -1,0 +1,42 @@
+# A second CDT shape — storage rather than compute. Useful for checking that
+# capacity_type filtering works:
+#
+#   optimus-capacity list --capacity-type storage
+
+tosca_definitions_version: tosca_simple_yaml_1_3
+
+metadata:
+  template_name:    budapest-object-store-1
+  template_author:  SZTAKI Cloud
+  template_version: 1.0.0
+  provider_id:      did:swarm:cp-sztaki-02
+  # capability_id is filled in after reserving a capID. It is documentation:
+  # the binding is the capID in the request URL.
+  capability_id:    REPLACE_WITH_CAPID
+
+description: >
+  S3-compatible object storage capacity in Budapest, offered to the swarm
+  for dataset staging and archival.
+
+topology_template:
+  node_templates:
+    object_store:
+      type: tosca.nodes.Storage.ObjectStorage
+      properties:
+        name:      budapest-object-store-1
+        size:      120 TB
+        maxsize:   500 TB
+        protocol:  s3
+        region:    eu-hu-budapest
+        endpoint:  https://s3.budapest.example.org
+        encryption_at_rest: true
+        replication_factor: 3
+        availability: 0.999
+
+  policies:
+    - retention:
+        type: tosca.policies.Placement
+        properties:
+          region:           eu-hu-budapest
+          data_residency:   EU
+          retention_period: 365

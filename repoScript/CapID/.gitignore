@@ -1,0 +1,33 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.Python
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Test / coverage
+.pytest_cache/
+.coverage
+htmlcov/
+coverage.xml
+
+# Local config — never commit endpoints or credentials
+.env
+*.local.yaml
+
+# Editors
+.idea/
+.vscode/
+*.swp
+.DS_Store
+
+# Artifacts pulled from an agent
+*.tar.gz
+backup*.json
