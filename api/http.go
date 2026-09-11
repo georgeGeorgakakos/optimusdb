@@ -249,6 +249,217 @@ func storeError(w http.ResponseWriter, code int, msg string) {
 	_ = json.NewEncoder(w).Encode(map[string]string{"error": msg})
 }
 
+// ============================================================================
+// CAPACITY REGISTRY ENDPOINTS
+// ============================================================================
+// Capacity Provider → OptimusDB → RA flow:
+//
+//   1. CP  -> POST /api/v1/capacity/reserve        issue a capID
+//   2. CP  -> POST /api/v1/capacity/{capID}/cdt    submit the CDT
+//   3. CP  -> RA                                   capID into RA configuration
+//   4. RA  -> GET  /api/v1/capacity/{capID}        retrieve the CDT
+//
+// The capID embeds the issuing agent's libp2p peer ID, so it is unique across
+// every deployed agent by construction — no coordination round is needed to
+// hand one out. See app/service.go, CAPACITY REGISTRY.
+
+// capacityReserveHandler serves POST /api/v1/capacity/reserve — step 1.
+func capacityReserveHandler(kb *app.KnowledgeBaseDB) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.Method == http.MethodOptions {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+
+		var req app.CapacityRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			storeError(w, http.StatusBadRequest, "invalid JSON body: "+err.Error())
+			return
+		}
+
+		ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+		defer cancel()
+
+		res, err := kb.ReserveCapacity(ctx, req)
+		if err != nil {
+			// Missing required fields are the caller's problem; anything else
+			// is ours (store not ready, node still starting).
+			code := http.StatusInternalServerError
+			if strings.Contains(err.Error(), "is required") {
+				code = http.StatusBadRequest
+			}
+			storeError(w, code, err.Error())
+			return
+		}
+
+		logger.Info("[CAPACITY] issued %s to provider %s", res.CapID, res.ProviderID)
+		w.WriteHeader(http.StatusCreated)
+		_ = json.NewEncoder(w).Encode(res)
+	}
+}
+
+// capacityCDTHandler serves POST /api/v1/capacity/{capID}/cdt — step 2.
+// Accepts either the CDT document directly, or {"cdt": {...}} as a wrapper.
+func capacityCDTHandler(kb *app.KnowledgeBaseDB) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.Method == http.MethodOptions {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+
+		capID := capIDFromRequest(r)
+		if capID == "" {
+			storeError(w, http.StatusBadRequest, "capID missing from path")
+			return
+		}
+
+		var body map[string]interface{}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			storeError(w, http.StatusBadRequest, "invalid JSON body: "+err.Error())
+			return
+		}
+		cdt := body
+		if inner, ok := body["cdt"].(map[string]interface{}); ok {
+			cdt = inner
+		}
+
+		ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+		defer cancel()
+
+		res, err := kb.AttachCDT(ctx, capID, cdt)
+		if err != nil {
+			code := http.StatusInternalServerError
+			if strings.Contains(err.Error(), "unknown capID") {
+				code = http.StatusNotFound
+			} else if strings.Contains(err.Error(), "empty") ||
+				strings.Contains(err.Error(), "released") {
+				code = http.StatusBadRequest
+			}
+			storeError(w, code, err.Error())
+			return
+		}
+		_ = json.NewEncoder(w).Encode(res)
+	}
+}
+
+// capacityItemHandler serves GET and DELETE on /api/v1/capacity/{capID}.
+// GET is step 4 — how the RA fetches the CDT it was configured with.
+func capacityItemHandler(kb *app.KnowledgeBaseDB) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.Method == http.MethodOptions {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+
+		capID := capIDFromRequest(r)
+		if capID == "" {
+			storeError(w, http.StatusBadRequest, "capID missing from path")
+			return
+		}
+
+		ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+		defer cancel()
+
+		switch r.Method {
+		case http.MethodGet:
+			res, err := kb.GetCapacity(ctx, capID)
+			if err != nil {
+				storeError(w, http.StatusInternalServerError, err.Error())
+				return
+			}
+			if res == nil {
+				// Not on this node. That may just be replication lag, so say so
+				// rather than asserting the capID does not exist anywhere.
+				storeError(w, http.StatusNotFound,
+					"capID not found on this agent (it may not have replicated here yet)")
+				return
+			}
+			if r.URL.Query().Get("cdt_only") == "true" {
+				if !res.CDTSubmitted {
+					storeError(w, http.StatusNotFound, "no CDT submitted for this capID yet")
+					return
+				}
+				_ = json.NewEncoder(w).Encode(res.CDT)
+				return
+			}
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
+				"reservation": res,
+				"expired":     res.IsExpired(),
+			})
+
+		case http.MethodDelete:
+			res, err := kb.ReleaseCapacity(ctx, capID)
+			if err != nil {
+				code := http.StatusInternalServerError
+				if strings.Contains(err.Error(), "unknown capID") {
+					code = http.StatusNotFound
+				}
+				storeError(w, code, err.Error())
+				return
+			}
+			_ = json.NewEncoder(w).Encode(res)
+
+		default:
+			storeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		}
+	}
+}
+
+// capacityListHandler serves GET /api/v1/capacity with optional exact-match
+// filters: provider_id, capacity_type, region, status, expected_ra, issued_by.
+func capacityListHandler(kb *app.KnowledgeBaseDB) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.Method == http.MethodOptions {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+
+		filter := map[string]string{}
+		for _, k := range []string{"provider_id", "capacity_type", "region",
+			"status", "expected_ra", "issued_by"} {
+			if v := r.URL.Query().Get(k); v != "" {
+				filter[k] = v
+			}
+		}
+
+		ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+		defer cancel()
+
+		list, err := kb.ListCapacities(ctx, filter)
+		if err != nil {
+			storeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"count":        len(list),
+			"filter":       filter,
+			"reservations": list,
+		})
+	}
+}
+
+// capIDFromRequest pulls {capID} from the mux vars, falling back to path
+// parsing so the handlers also work if mounted on a plain ServeMux.
+func capIDFromRequest(r *http.Request) string {
+	if v := mux.Vars(r)["capID"]; v != "" {
+		return v
+	}
+	parts := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
+	for i, p := range parts {
+		if p == "capacity" && i+1 < len(parts) {
+			if parts[i+1] == "reserve" {
+				return ""
+			}
+			return parts[i+1]
+		}
+	}
+	return ""
+}
+
 // uploadTOSCAHandler handles TOSCA template uploads with optional full structure storage
 func uploadTOSCAHandler(optimusdb *app.KnowledgeBaseDB) http.HandlerFunc {
 	type UploadRequest struct {
@@ -1982,6 +2193,21 @@ func RegisterMetadataRoutes(router *mux.Router, kb *app.KnowledgeBaseDB) {
 		Methods("DELETE", "OPTIONS")
 
 	logger.Info("[STORES] Routes registered at /api/v1/stores")
+
+	// ═══════════════════════════════════════════════════════════════
+	// CAPACITY REGISTRY — agent-issued capIDs for Capacity Providers
+	// ═══════════════════════════════════════════════════════════════
+	// /reserve is registered before /{capID} so the literal path wins.
+	apiV1.HandleFunc("/capacity/reserve", capacityReserveHandler(kb)).
+		Methods("POST", "OPTIONS")
+	apiV1.HandleFunc("/capacity/{capID}/cdt", capacityCDTHandler(kb)).
+		Methods("POST", "PUT", "OPTIONS")
+	apiV1.HandleFunc("/capacity/{capID}", capacityItemHandler(kb)).
+		Methods("GET", "DELETE", "OPTIONS")
+	apiV1.HandleFunc("/capacity", capacityListHandler(kb)).
+		Methods("GET", "OPTIONS")
+
+	logger.Info("[CAPACITY] Routes registered at /api/v1/capacity")
 
 }
 

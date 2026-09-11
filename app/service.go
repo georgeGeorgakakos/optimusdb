@@ -31,6 +31,7 @@ import (
 	"berty.tech/go-orbit-db/iface"
 	"berty.tech/go-orbit-db/stores"
 	"berty.tech/go-orbit-db/stores/documentstore"
+	"github.com/google/uuid"
 	files "github.com/ipfs/go-ipfs-files"
 	"github.com/ipfs/interface-go-ipfs-core/path"
 	"github.com/libp2p/go-libp2p/core/event"
@@ -4466,4 +4467,342 @@ func saveConfigBestEffort(conf *config.Config) {
 	if err := config.SaveStructAsJSON(conf, *config.FlagRepo+"_config"); err != nil {
 		logger.Warn("[DYNSTORE] could not persist config: %v", err)
 	}
+}
+
+// ============================================================================
+// CAPACITY REGISTRY
+// ============================================================================
+//
+// Implements step 1 of the Capacity Provider flow — issuing a capID that is
+// unique across every agent already deployed — plus the CDT bind and lookup
+// that steps 2 and 4 need.
+//
+// Uniqueness argument
+// -------------------
+// A capID looks like:
+//
+//     cap-<issuing peer ID>-<uuidv4>
+//
+// The middle segment is the issuing agent's libp2p peer ID: a multihash of
+// that node's public key, and therefore globally unique. Because every agent
+// issues only inside its own segment of the namespace, two agents cannot
+// produce the same capID even in principle. No coordination is required — no
+// leader, no consensus round, no allocation table — which is what makes this
+// safe in a partitioned or offline-capable deployment.
+//
+// The UUIDv4 suffix makes the ID unique WITHIN one agent across restarts. It
+// is not load-bearing for cross-agent uniqueness; the peer ID already is.
+//
+// Set app.CapIDPeerLen > 0 to shorten the peer-ID segment. That trades the
+// by-construction guarantee for a probabilistic one — documented on the const.
+//
+// Storage
+// -------
+// Reservations live in the kbcapacity document store, keyed by _id = capID.
+// The store is created on first use by the dynamic store registry, so it needs
+// no entry in initPeer.go and is covered by export/import automatically.
+// Retrieval by capID is a direct docstore Get, and because the store is
+// CRDT-replicated, an RA can read a capID from any agent.
+
+// capacityStore resolves (creating on first use) the capacity docstore.
+func (kb *KnowledgeBaseDB) capacityStore(ctx context.Context) (iface.DocumentStore, error) {
+	ds, _, err := kb.ResolveDocStore(ctx, CapacityStoreName, StoreCreate)
+	if err != nil {
+		return nil, fmt.Errorf("capacity store: %w", err)
+	}
+	return ds, nil
+}
+
+// AgentPeerID returns this agent's libp2p peer ID, trying the three places it
+// is populated during startup. Returns "" only if called before InitPeer.
+func (kb *KnowledgeBaseDB) AgentPeerID() string {
+	if kb.HostID != "" {
+		return kb.HostID
+	}
+	if kb.Config != nil && kb.Config.PeerID != "" {
+		return kb.Config.PeerID
+	}
+	if kb.Node != nil && kb.Node.PeerHost != nil {
+		return kb.Node.PeerHost.ID().String()
+	}
+	return ""
+}
+
+// GenerateCapID builds a capID in this agent's namespace. Exported so the
+// same identifier scheme can be reused for other agent-issued IDs.
+func (kb *KnowledgeBaseDB) GenerateCapID() (string, error) {
+	peerID := kb.AgentPeerID()
+	if peerID == "" {
+		return "", fmt.Errorf("agent peer ID not available yet — node still starting")
+	}
+	if CapIDPeerLen > 0 && len(peerID) > CapIDPeerLen {
+		peerID = peerID[len(peerID)-CapIDPeerLen:]
+	}
+	return fmt.Sprintf("%s-%s-%s", CapIDPrefix, peerID, uuid.New().String()), nil
+}
+
+// ReserveCapacity issues a capID and records the reservation.
+//
+// The record is written immediately rather than at CDT submission, so that:
+//   - the ID is verifiably taken the moment it is handed out,
+//   - an RA configured with a capID can be validated before any CDT exists,
+//   - reservations that never receive a CDT are visible as orphans.
+func (kb *KnowledgeBaseDB) ReserveCapacity(
+	ctx context.Context, req CapacityRequest,
+) (*CapacityReservation, error) {
+
+	if strings.TrimSpace(req.ProviderID) == "" {
+		return nil, fmt.Errorf("provider_id is required")
+	}
+	if strings.TrimSpace(req.CapacityType) == "" {
+		return nil, fmt.Errorf("capacity_type is required")
+	}
+
+	capID, err := kb.GenerateCapID()
+	if err != nil {
+		return nil, err
+	}
+
+	now := time.Now().UTC()
+	res := &CapacityReservation{
+		ID:           capID,
+		CapID:        capID,
+		Status:       CapacityStatusReserved,
+		ProviderID:   strings.TrimSpace(req.ProviderID),
+		ProviderName: req.ProviderName,
+		CapacityType: strings.ToLower(strings.TrimSpace(req.CapacityType)),
+		CapacityName: req.CapacityName,
+		Region:       req.Region,
+		CDTVersion:   req.CDTVersion,
+		ExpectedRA:   req.ExpectedRA,
+		Attributes:   req.Attributes,
+		IssuedBy:     kb.AgentPeerID(),
+		IssuedAt:     now.Format(time.RFC3339),
+		ExpiresAt:    now.Add(CapacityReservationTTL).Format(time.RFC3339),
+		UpdatedAt:    now.Format(time.RFC3339),
+		CDTSubmitted: false,
+		Store:        CapacityStoreName,
+	}
+
+	ds, err := kb.capacityStore(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	doc, err := capacityToMap(res)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := ds.Put(ctx, doc); err != nil {
+		return nil, fmt.Errorf("persist reservation %s: %w", capID, err)
+	}
+
+	logger.Info("[CAPACITY] reserved %s for provider=%s type=%s",
+		capID, res.ProviderID, res.CapacityType)
+	return res, nil
+}
+
+// GetCapacity retrieves a reservation by capID. Returns (nil, nil) when the
+// capID is unknown on this node — which may simply mean replication has not
+// caught up yet, so callers should treat it as "not here" rather than "does
+// not exist anywhere".
+func (kb *KnowledgeBaseDB) GetCapacity(
+	ctx context.Context, capID string,
+) (*CapacityReservation, error) {
+
+	capID = strings.TrimSpace(capID)
+	if capID == "" {
+		return nil, fmt.Errorf("capID is required")
+	}
+
+	ds, err := kb.capacityStore(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	docs, err := ds.Get(ctx, capID, &iface.DocumentStoreGetOptions{
+		CaseInsensitive: false,
+		PartialMatches:  false,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("lookup %s: %w", capID, err)
+	}
+	if len(docs) == 0 {
+		return nil, nil
+	}
+	m, ok := docs[0].(map[string]interface{})
+	if !ok {
+		return nil, fmt.Errorf("unexpected record type for %s", capID)
+	}
+	return capacityFromMap(m)
+}
+
+// AttachCDT binds a Capacity Description Template to an existing reservation
+// (step 2) and flips its status to active.
+func (kb *KnowledgeBaseDB) AttachCDT(
+	ctx context.Context, capID string, cdt map[string]interface{},
+) (*CapacityReservation, error) {
+
+	if len(cdt) == 0 {
+		return nil, fmt.Errorf("cdt body is empty")
+	}
+
+	res, err := kb.GetCapacity(ctx, capID)
+	if err != nil {
+		return nil, err
+	}
+	if res == nil {
+		return nil, fmt.Errorf("unknown capID %q — reserve it first via POST /api/v1/capacity/reserve", capID)
+	}
+	if res.Status == CapacityStatusReleased {
+		return nil, fmt.Errorf("capID %q was released and cannot accept a CDT", capID)
+	}
+
+	now := time.Now().UTC().Format(time.RFC3339)
+	res.CDT = cdt
+	res.CDTSubmitted = true
+	res.CDTSubmitted_At = now
+	res.UpdatedAt = now
+	res.Status = CapacityStatusActive
+
+	ds, err := kb.capacityStore(ctx)
+	if err != nil {
+		return nil, err
+	}
+	doc, err := capacityToMap(res)
+	if err != nil {
+		return nil, err
+	}
+	// Docstore Put replaces by _id; CRDT merge resolves to last-writer-wins.
+	if _, err := ds.Put(ctx, doc); err != nil {
+		return nil, fmt.Errorf("attach CDT to %s: %w", capID, err)
+	}
+
+	logger.Info("[CAPACITY] CDT attached to %s (provider=%s)", capID, res.ProviderID)
+	return res, nil
+}
+
+// ReleaseCapacity marks a reservation released. The record is kept rather than
+// deleted so the capID is never reissued and an RA still holding it gets a
+// clear answer instead of a 404.
+func (kb *KnowledgeBaseDB) ReleaseCapacity(
+	ctx context.Context, capID string,
+) (*CapacityReservation, error) {
+
+	res, err := kb.GetCapacity(ctx, capID)
+	if err != nil {
+		return nil, err
+	}
+	if res == nil {
+		return nil, fmt.Errorf("unknown capID %q", capID)
+	}
+
+	res.Status = CapacityStatusReleased
+	res.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
+
+	ds, err := kb.capacityStore(ctx)
+	if err != nil {
+		return nil, err
+	}
+	doc, err := capacityToMap(res)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := ds.Put(ctx, doc); err != nil {
+		return nil, fmt.Errorf("release %s: %w", capID, err)
+	}
+
+	logger.Info("[CAPACITY] released %s", capID)
+	return res, nil
+}
+
+// ListCapacities returns reservations matching an optional exact-match filter
+// over provider_id, capacity_type, region, status, expected_ra and issued_by.
+// An empty filter returns everything on this node.
+func (kb *KnowledgeBaseDB) ListCapacities(
+	ctx context.Context, filter map[string]string,
+) ([]*CapacityReservation, error) {
+
+	ds, err := kb.capacityStore(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	docs, err := ds.Query(ctx, func(doc interface{}) (bool, error) {
+		m, ok := doc.(map[string]interface{})
+		if !ok {
+			return false, nil
+		}
+		for k, want := range filter {
+			if want == "" {
+				continue
+			}
+			got, _ := m[k].(string)
+			if !strings.EqualFold(got, want) {
+				return false, nil
+			}
+		}
+		return true, nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("list capacities: %w", err)
+	}
+
+	out := make([]*CapacityReservation, 0, len(docs))
+	for _, d := range docs {
+		m, ok := d.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		r, err := capacityFromMap(m)
+		if err != nil || r == nil {
+			continue
+		}
+		out = append(out, r)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].IssuedAt > out[j].IssuedAt })
+	return out, nil
+}
+
+// IsExpired reports whether a reservation passed its TTL without a CDT.
+// Advisory only — nothing is deleted, so a late CDT still binds.
+func (r *CapacityReservation) IsExpired() bool {
+	if r == nil || r.CDTSubmitted || r.ExpiresAt == "" {
+		return false
+	}
+	t, err := time.Parse(time.RFC3339, r.ExpiresAt)
+	if err != nil {
+		return false
+	}
+	return time.Now().UTC().After(t)
+}
+
+// capacityToMap round-trips through JSON so the stored document uses exactly
+// the field names the API returns — no second mapping to keep in sync.
+func capacityToMap(r *CapacityReservation) (map[string]interface{}, error) {
+	b, err := json.Marshal(r)
+	if err != nil {
+		return nil, fmt.Errorf("marshal reservation: %w", err)
+	}
+	var m map[string]interface{}
+	if err := json.Unmarshal(b, &m); err != nil {
+		return nil, fmt.Errorf("unmarshal reservation: %w", err)
+	}
+	m["_id"] = r.ID
+	return m, nil
+}
+
+func capacityFromMap(m map[string]interface{}) (*CapacityReservation, error) {
+	b, err := json.Marshal(m)
+	if err != nil {
+		return nil, err
+	}
+	var r CapacityReservation
+	if err := json.Unmarshal(b, &r); err != nil {
+		return nil, err
+	}
+	if r.CapID == "" {
+		r.CapID = r.ID
+	}
+	return &r, nil
 }

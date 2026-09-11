@@ -159,6 +159,96 @@ type StoreInfo struct {
 }
 
 // ============================================================================
+// CAPACITY REGISTRY — types
+// ============================================================================
+// Supports the Capacity Provider → OptimusDB → RA flow:
+//
+//   1. CP  -> OptimusDB : reserve a capID for a new capacity   (this API)
+//   2. CP  -> OptimusDB : submit the CDT carrying that capID
+//   3. CP  -> RA        : capID goes into the RA configuration
+//   4. RA  -> OptimusDB : retrieve the CDT by capID
+//
+// Behaviour lives in service.go under "CAPACITY REGISTRY".
+
+const (
+	// CapacityStoreName is the document store holding reservations. It is not
+	// opened in initPeer.go — the dynamic store registry creates it on first
+	// use, which also means it is exported and imported automatically.
+	CapacityStoreName = "kbcapacity"
+
+	// CapIDPrefix marks every issued identifier.
+	CapIDPrefix = "cap"
+
+	// CapIDPeerLen controls how much of the issuing agent's peer ID is
+	// embedded in the capID.
+	//
+	// 0 (the default) embeds the FULL peer ID. Uniqueness is then guaranteed
+	// BY CONSTRUCTION rather than probabilistically: a peer ID is a multihash
+	// of the node's public key and is globally unique, so two agents cannot
+	// issue the same capID even in principle — no coordination, no leader, no
+	// consensus round.
+	//
+	// Setting a positive value truncates the peer ID to that many characters,
+	// producing shorter identifiers at the cost of that guarantee: two agents
+	// sharing a prefix would then rely on the UUIDv4 suffix alone (122 bits of
+	// randomness — safe in practice, but probabilistic rather than provable).
+	CapIDPeerLen = 0
+
+	// CapacityReservationTTL is how long a reservation may sit without a CDT
+	// before it is reported as expired. Expiry is advisory — nothing is
+	// deleted, so a late CDT still binds.
+	CapacityReservationTTL = 24 * time.Hour
+)
+
+// Capacity lifecycle states.
+const (
+	CapacityStatusReserved = "reserved" // capID issued, no CDT yet
+	CapacityStatusActive   = "active"   // CDT attached
+	CapacityStatusReleased = "released" // withdrawn by the provider
+)
+
+// CapacityRequest is the body a Capacity Provider posts to reserve a capID.
+// Only ProviderID and CapacityType are required; everything else is recorded
+// as supplied and used for filtering later.
+type CapacityRequest struct {
+	ProviderID   string                 `json:"provider_id"`             // DID or stable provider identifier (required)
+	ProviderName string                 `json:"provider_name,omitempty"` // human-readable
+	CapacityType string                 `json:"capacity_type"`           // compute | storage | network | ... (required)
+	CapacityName string                 `json:"capacity_name,omitempty"` // provider's own label
+	Region       string                 `json:"region,omitempty"`        // e.g. eu-gr-athens
+	CDTVersion   string                 `json:"cdt_version,omitempty"`   // TOSCA spec the CDT will use
+	ExpectedRA   string                 `json:"expected_ra,omitempty"`   // RA that will consume this capacity
+	Attributes   map[string]interface{} `json:"attributes,omitempty"`    // free-form: num_cpus, mem_size_mb, gpu, ...
+}
+
+// CapacityReservation is the stored record and the response body. It is
+// persisted as a document whose _id is the capID, so retrieval by capID is a
+// direct docstore Get on every agent.
+type CapacityReservation struct {
+	ID           string                 `json:"_id"`    // the capID
+	CapID        string                 `json:"cap_id"` // duplicate of _id, for clients
+	Status       string                 `json:"status"` // reserved | active | released
+	ProviderID   string                 `json:"provider_id"`
+	ProviderName string                 `json:"provider_name,omitempty"`
+	CapacityType string                 `json:"capacity_type"`
+	CapacityName string                 `json:"capacity_name,omitempty"`
+	Region       string                 `json:"region,omitempty"`
+	CDTVersion   string                 `json:"cdt_version,omitempty"`
+	ExpectedRA   string                 `json:"expected_ra,omitempty"`
+	Attributes   map[string]interface{} `json:"attributes,omitempty"`
+
+	IssuedBy  string `json:"issued_by"`            // peer ID of the issuing agent
+	IssuedAt  string `json:"issued_at"`            // RFC3339 UTC
+	ExpiresAt string `json:"expires_at,omitempty"` // advisory reservation deadline
+	UpdatedAt string `json:"updated_at,omitempty"`
+
+	CDTSubmitted    bool                   `json:"cdt_submitted"`
+	CDTSubmitted_At string                 `json:"cdt_submitted_at,omitempty"`
+	CDT             map[string]interface{} `json:"cdt,omitempty"` // the Capacity Description Template
+	Store           string                 `json:"store"`         // where this record lives
+}
+
+// ============================================================================
 // METADATA SERVICE INTERFACE METHODS
 // ============================================================================
 // These methods implement the KnowledgeBasePort interface required by
