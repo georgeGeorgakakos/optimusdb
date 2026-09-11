@@ -4308,7 +4308,21 @@ func (kb *KnowledgeBaseDB) EnsureDocStore(
 	}
 
 	dir := filepath.Join(orbitCacheRoot(), name)
-	docstoreOpt := documentstore.DefaultStoreOptsForMap("path")
+	// Key field MUST be "_id", not "path".
+	//
+	// initPeer.go switches docstoreOpt to DefaultStoreOptsForMap("_id") at the
+	// kbmetadata block and every store opened after that point inherits it —
+	// kbmetadata, dsswres, dsswresaloc, whoiswho and all five tosca_* stores.
+	// Only contributions, validations and kbdata still use "path".
+	//
+	// The whole CRUD layer writes documents keyed on _id (crudPutDocStoreRev
+	// auto-generates one when absent), so a dynamic store opened with "path"
+	// rejects every write with:
+	//
+	//   unable to extract key from value: missing value for field `path` in entry
+	//
+	// Dynamic stores therefore follow the CRUD convention, not the legacy one.
+	docstoreOpt := documentstore.DefaultStoreOptsForMap("_id")
 
 	// Same access profile as the TOSCA stores in initPeer.go: open read and
 	// write so peers replicate. Tighten per store later if required.
@@ -4513,19 +4527,49 @@ func (kb *KnowledgeBaseDB) capacityStore(ctx context.Context) (iface.DocumentSto
 	return ds, nil
 }
 
-// AgentPeerID returns this agent's libp2p peer ID, trying the three places it
-// is populated during startup. Returns "" only if called before InitPeer.
+// AgentPeerID returns this agent's libp2p peer ID in printable base58 form.
+//
+// Order matters here. kb.HostID is assigned in main.go as
+//
+//	knowledgeBaseDB.HostID = string(knowledgeBaseDB.Node.PeerHost.ID())
+//
+// peer.ID is a `type ID string` holding the RAW multihash bytes, so that cast
+// produces binary, not the "Qm..." text form. Using it inside an identifier
+// yields mojibake such as:
+//
+//	cap-\u0012 \ufffd\u0005\ufffd...-c1f7e683-...
+//
+// PeerHost.ID().String() is the canonical base58 encoding, so it is tried
+// first. HostID is used only as a last resort and only if it looks printable.
 func (kb *KnowledgeBaseDB) AgentPeerID() string {
-	if kb.HostID != "" {
-		return kb.HostID
+	if kb.Node != nil && kb.Node.PeerHost != nil {
+		if id := kb.Node.PeerHost.ID().String(); isPrintableID(id) {
+			return id
+		}
 	}
-	if kb.Config != nil && kb.Config.PeerID != "" {
+	// Config.PeerID is written with fmt.Sprintf("%s", node.Identity), which
+	// goes through peer.ID.String() and is therefore already base58.
+	if kb.Config != nil && isPrintableID(kb.Config.PeerID) {
 		return kb.Config.PeerID
 	}
-	if kb.Node != nil && kb.Node.PeerHost != nil {
-		return kb.Node.PeerHost.ID().String()
+	if isPrintableID(kb.HostID) {
+		return kb.HostID
 	}
 	return ""
+}
+
+// isPrintableID guards against raw multihash bytes leaking into an identifier.
+// Base58 peer IDs are ASCII alphanumerics; anything else is rejected.
+func isPrintableID(s string) bool {
+	if len(s) < 8 {
+		return false
+	}
+	for _, r := range s {
+		if !((r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9')) {
+			return false
+		}
+	}
+	return true
 }
 
 // GenerateCapID builds a capID in this agent's namespace. Exported so the
@@ -4538,7 +4582,18 @@ func (kb *KnowledgeBaseDB) GenerateCapID() (string, error) {
 	if CapIDPeerLen > 0 && len(peerID) > CapIDPeerLen {
 		peerID = peerID[len(peerID)-CapIDPeerLen:]
 	}
-	return fmt.Sprintf("%s-%s-%s", CapIDPrefix, peerID, uuid.New().String()), nil
+	capID := fmt.Sprintf("%s-%s-%s", CapIDPrefix, peerID, uuid.New().String())
+
+	// Belt and braces: an identifier that is not clean ASCII would be unusable
+	// in a URL path and in an RA configuration file, so fail loudly here rather
+	// than persist it.
+	for _, r := range capID {
+		if r < 0x20 || r > 0x7e {
+			return "", fmt.Errorf("generated capID contains non-printable characters — "+
+				"peer ID was not base58 encoded (got %q)", peerID)
+		}
+	}
+	return capID, nil
 }
 
 // ReserveCapacity issues a capID and records the reservation.

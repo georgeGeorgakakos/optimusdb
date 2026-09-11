@@ -199,9 +199,14 @@ func main() {
 		os.Exit(1)
 	}
 
-	// HostID for payloads/fallbacks
+	// HostID for payloads/fallbacks.
+	//
+	// peer.ID is `type ID string` holding the RAW multihash bytes, so
+	// string(...) yields binary rather than the canonical "Qm..." text. That
+	// binary then leaked into anything using HostID — EMS event NodeIDs, and
+	// agent-issued identifiers. .String() is the base58 encoding.
 	if knowledgeBaseDB.Node != nil && knowledgeBaseDB.Node.PeerHost != nil {
-		knowledgeBaseDB.HostID = string(knowledgeBaseDB.Node.PeerHost.ID())
+		knowledgeBaseDB.HostID = knowledgeBaseDB.Node.PeerHost.ID().String()
 	}
 
 	// ===============================
