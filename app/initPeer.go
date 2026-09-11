@@ -636,6 +636,15 @@ func InitPeer(knowledgeBaseDB *KnowledgeBaseDB, rdbms *KnowledgeBaseSQLite, benc
 	logger.Debug("[DEBUG] Persistence interceptor initialized for automatic metadata extraction")
 	//########################################################################
 
+	//########################################################################
+	// Reopen document stores created at runtime on a previous run. Must come
+	// after knowledgeBaseDB.Config is assigned above and after Orbit is live,
+	// otherwise the persisted OrbitDB addresses cannot be resolved and the
+	// stores would be recreated empty. See service.go, DYNAMIC DOCUMENT STORE
+	// REGISTRY.
+	knowledgeBaseDB.RestoreDynamicStores(ctx)
+	//########################################################################
+
 	// connect to a bootstrap peer
 	if *config.FlagBootstrap != "" {
 		logger.Debug("[DEBUG] bootstrap Connect to a peer, TOSCAImportedStoreAddr %v", *config.FlagBootstrap)

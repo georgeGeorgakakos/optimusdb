@@ -97,6 +97,65 @@ type KnowledgeBaseDB struct {
 	// an import cycle between the app and backupfunc packages.
 	// Cast with: kb.ExchangeService.(*backupfunc.Service)
 	ExchangeService interface{}
+
+	// DynamicStores holds document stores created at runtime, keyed by
+	// lowercase name. Guarded by dynMu. Resolution, creation and restore
+	// logic live in service.go (see "DYNAMIC DOCUMENT STORE REGISTRY").
+	//
+	// These are ordinary OrbitDB docstores: replicated, queryable through
+	// the normal dstype paths, and included in export/import automatically
+	// because backupfunc calls AllDocStores() rather than keeping its own
+	// hardcoded list.
+	DynamicStores map[string]*orbitdb.DocumentStore
+	dynMu         sync.RWMutex
+}
+
+// ============================================================================
+// DOCUMENT STORE RESOLUTION — types
+// ============================================================================
+// Behaviour lives in service.go. These declarations sit here because they are
+// part of the KnowledgeBaseDB surface.
+//
+// Background: every CRUD entry point used to carry its own
+// `switch strings.ToLower(dstype)` ending in `default:` → DsSWres. An unknown
+// dstype — a typo, or a name a client invented such as "kbtrust" — was accepted
+// on write AND on read, so the round-trip succeeded and the caller never learned
+// the data had gone somewhere else. All of those switches now delegate to
+// ResolveDocStore, which never silently redirects.
+
+// StoreMode tells the resolver what to do when a store name is not yet known.
+//
+// Every call site in OptimusDB uses StoreCreate: store names are not fixed at
+// compile time, so naming a store is how you create it. StoreLookup is kept
+// for call sites that should refuse to materialise anything — none today, but
+// the chat pipeline in api/http.go is a candidate, since its dstype comes from
+// a language model rather than a client.
+type StoreMode int
+
+const (
+	// StoreLookup requires the store to already exist; an unknown name is an
+	// error listing the stores that do exist. Not used by default.
+	StoreLookup StoreMode = iota
+
+	// StoreCreate materialises the store on demand. This is the default
+	// across all CRUD, query, upload, hydration and import paths.
+	StoreCreate
+)
+
+// DefaultStoreName is what an EMPTY dstype resolves to — a documented default
+// that existing clients rely on. It is not a fallback: a dstype that is
+// present but unrecognised creates its own store rather than landing here.
+const DefaultStoreName = "dsswres"
+
+// StoreCreateTimeout bounds an explicit store creation request. Opening a
+// docstore writes an OrbitDB manifest, so allow room.
+const StoreCreateTimeout = 30 * time.Second
+
+// StoreInfo describes one live document store, returned by ListStores().
+type StoreInfo struct {
+	Name    string `json:"name"`
+	Kind    string `json:"kind"`    // "builtin" | "dynamic"
+	Address string `json:"address"` // OrbitDB address
 }
 
 // ============================================================================
@@ -128,61 +187,16 @@ func (kb *KnowledgeBaseDB) GetMetadataCache() interface{} {
 // can hydrate search results with OrbitDB content without creating an import cycle.
 // Uses the same DocumentStore.Get() pattern as isValid() in service.go.
 func (kb *KnowledgeBaseDB) FetchDocument(ctx context.Context, storeName, docID string) (map[string]interface{}, error) {
-	var store iface.DocumentStore
-
-	switch strings.ToLower(storeName) {
-	case "dsswres":
-		if kb.DsSWres == nil {
-			return nil, fmt.Errorf("DsSWres store not initialized")
-		}
-		store = *kb.DsSWres
-	case "dsswresaloc":
-		if kb.DsSWresaloc == nil {
-			return nil, fmt.Errorf("DsSWresaloc store not initialized")
-		}
-		store = *kb.DsSWresaloc
-	case "kbmetadata":
-		if kb.KBMetadata == nil {
-			return nil, fmt.Errorf("KBMetadata store not initialized")
-		}
-		store = *kb.KBMetadata
-	case "kbdata":
-		if kb.KBdata == nil {
-			return nil, fmt.Errorf("KBdata store not initialized")
-		}
-		store = *kb.KBdata
-	case "tosca_imported":
-		if kb.DsTOSCA_Imported == nil {
-			return nil, fmt.Errorf("DsTOSCA_Imported store not initialized")
-		}
-		store = *kb.DsTOSCA_Imported
-	case "tosca_adt":
-		if kb.DsTOSCA_ADT == nil {
-			return nil, fmt.Errorf("DsTOSCA_ADT store not initialized")
-		}
-		store = *kb.DsTOSCA_ADT
-	case "tosca_capacities":
-		if kb.DsTOSCA_Capacities == nil {
-			return nil, fmt.Errorf("DsTOSCA_Capacities store not initialized")
-		}
-		store = *kb.DsTOSCA_Capacities
-	case "tosca_deploymentplan":
-		if kb.DsTOSCA_DeploymentPlan == nil {
-			return nil, fmt.Errorf("DsTOSCA_DeploymentPlan store not initialized")
-		}
-		store = *kb.DsTOSCA_DeploymentPlan
-	case "tosca_eventhistory":
-		if kb.DsTOSCA_EventHistory == nil {
-			return nil, fmt.Errorf("DsTOSCA_EventHistory store not initialized")
-		}
-		store = *kb.DsTOSCA_EventHistory
-	case "whoiswho":
-		if kb.WhoiswhoStore == nil {
-			return nil, fmt.Errorf("WhoiswhoStore store not initialized")
-		}
-		store = *kb.WhoiswhoStore
-	default:
-		return nil, fmt.Errorf("FetchDocument: unknown store '%s'", storeName)
+	// Resolution is centralised in ResolveDocStore (service.go). This also
+	// fixes a real gap in the previous switch, which had no "validations"
+	// case — a semantic search hit in that store could never be hydrated.
+	//
+	// StoreCreate matters here: the store name arrives from a peer's search
+	// reply, so it may name a store this node has not opened yet. Creating
+	// it lets replication fill it in rather than failing the hydration.
+	store, _, err := kb.ResolveDocStore(ctx, storeName, StoreCreate)
+	if err != nil {
+		return nil, fmt.Errorf("FetchDocument: %w", err)
 	}
 
 	opts := &iface.DocumentStoreGetOptions{

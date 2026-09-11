@@ -25,6 +25,13 @@ type Config struct {
 	TOSCACapacitiesStoreAddr     string `json:"toscaCapacitiesStoreAddr"`
 	TOSCADeploymentPlanStoreAddr string `json:"toscaDeploymentPlanStoreAddr"`
 	TOSCAEventHistoryStoreAddr   string `json:"toscaEventHistoryStoreAddr"`
+
+	// DynamicStoreAddrs holds document stores created at runtime — either
+	// explicitly via POST /api/v1/stores, or implicitly on the first write
+	// to an unknown dstype. Key is the lowercase store name, value is the
+	// OrbitDB address, so a restart reattaches to the same log instead of
+	// silently creating a fresh, empty store.
+	DynamicStoreAddrs map[string]string `json:"dynamicStoreAddrs,omitempty"`
 }
 
 // LoadConfig loads the persistent config file into config struct
@@ -63,6 +70,8 @@ func LoadConfig() (*Config, error) {
 				TOSCADeploymentPlanStoreAddr: "tosca_deploymentplan",
 				TOSCAEventHistoryStoreAddr:   "tosca_eventhistory",
 				//
+				DynamicStoreAddrs: map[string]string{},
+				//
 				PeerID: "",
 			}
 			//fmt.Fprintf(os.Stdout, "Stores contributions,validations,kbdata and kbmetadata are created from scratch \n")
@@ -82,6 +91,12 @@ func LoadConfig() (*Config, error) {
 	err = json.Unmarshal(data, config)
 	if err != nil {
 		return nil, err
+	}
+
+	// An older config file predates dynamic stores and has no such key.
+	// Guard here so callers never write to a nil map.
+	if config.DynamicStoreAddrs == nil {
+		config.DynamicStoreAddrs = map[string]string{}
 	}
 
 	return config, nil

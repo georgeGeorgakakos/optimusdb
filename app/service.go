@@ -20,6 +20,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -29,10 +30,12 @@ import (
 	"berty.tech/go-orbit-db/accesscontroller"
 	"berty.tech/go-orbit-db/iface"
 	"berty.tech/go-orbit-db/stores"
+	"berty.tech/go-orbit-db/stores/documentstore"
 	files "github.com/ipfs/go-ipfs-files"
 	"github.com/ipfs/interface-go-ipfs-core/path"
 	"github.com/libp2p/go-libp2p/core/event"
 	"github.com/libp2p/go-libp2p/core/network"
+	"github.com/libp2p/go-libp2p/p2p/host/eventbus"
 	"golang.org/x/net/context"
 )
 
@@ -750,22 +753,17 @@ func unifiedQueryDocStore(optimusdb *KnowledgeBaseDB, logChan chan Log, dbtype s
 	}
 	logChan <- Log{Type: Info, Data: fmt.Sprintf("Parsed filters: %v", parsedFilters)}
 
-	// Select the appropriate docstore based on dbtype
-	dbDocStore := *optimusdb.DsSWres
-	switch dbtype {
-	case "dsswres":
-		dbDocStore = *optimusdb.DsSWres
-	case "dsswresaloc":
-		dbDocStore = *optimusdb.DsSWresaloc
-	default:
-		logChan <- Log{Type: Info, Data: "Defaulting to DsSWres as dbtype did not match available stores\n"}
-		dbDocStore = *optimusdb.DsSWres
+	// Resolve the docstore. Previously this switch knew only dsswres and
+	// dsswresaloc and defaulted everything else to dsswres — so a query
+	// against kbmetadata silently read the wrong store. Now every store
+	// resolves by its own name, and a name that does not exist yet is
+	// created and queried (empty) rather than aliased onto dsswres.
+	dbDocStore, storeName, err := optimusdb.ResolveDocStore(context.Background(), dbtype, StoreCreate)
+	if err != nil {
+		logChan <- Log{Type: RecoverableErr, Data: err.Error()}
+		return nil, err
 	}
-
-	if dbDocStore == nil {
-		logChan <- Log{Type: RecoverableErr, Data: "Selected docstore is nil"}
-		return nil, fmt.Errorf("selected docstore is nil")
-	}
+	logChan <- Log{Type: Info, Data: "Querying document store " + storeName}
 
 	logChan <- Log{Type: Info, Data: "Querying the selected document store"}
 
@@ -864,83 +862,14 @@ func crudGetDocStoreRev(optimusdb *KnowledgeBaseDB, logChan chan Log, dbtype str
 	hostCID host.Host, criteria []map[string]interface{}) ([]map[string]interface{}, error) {
 
 	ctx := context.Background()
-	var dbDocStore iface.DocumentStore
-	var storeName string
-
-	// Select DocumentStore based on dbtype
-	switch strings.ToLower(dbtype) {
-	case "dsswres":
-		if optimusdb.DsSWres == nil {
-			return nil, fmt.Errorf("DsSWres store not initialized")
-		}
-		dbDocStore = *optimusdb.DsSWres
-		storeName = "dsswres"
-	case "dsswresaloc":
-		if optimusdb.DsSWresaloc == nil {
-			return nil, fmt.Errorf("DsSWresaloc store not initialized")
-		}
-		dbDocStore = *optimusdb.DsSWresaloc
-		storeName = "dsswresaloc"
-	case "kbmetadata":
-		if optimusdb.KBMetadata == nil {
-			return nil, fmt.Errorf("KBMetadata store not initialized")
-		}
-		dbDocStore = *optimusdb.KBMetadata
-		storeName = "kbmetadata"
-	case "kbdata":
-		if optimusdb.KBdata == nil {
-			return nil, fmt.Errorf("KBdata store not initialized")
-		}
-		dbDocStore = *optimusdb.KBdata
-		storeName = "kbdata"
-	case "tosca_imported":
-		if optimusdb.DsTOSCA_Imported == nil {
-			return nil, fmt.Errorf("DsTOSCA_Imported store not initialized")
-		}
-		dbDocStore = *optimusdb.DsTOSCA_Imported
-		storeName = "tosca_imported"
-	case "tosca_adt":
-		if optimusdb.DsTOSCA_ADT == nil {
-			return nil, fmt.Errorf("DsTOSCA_ADT store not initialized")
-		}
-		dbDocStore = *optimusdb.DsTOSCA_ADT
-		storeName = "tosca_adt"
-	case "tosca_capacities":
-		if optimusdb.DsTOSCA_Capacities == nil {
-			return nil, fmt.Errorf("DsTOSCA_Capacities store not initialized")
-		}
-		dbDocStore = *optimusdb.DsTOSCA_Capacities
-		storeName = "tosca_capacities"
-	case "tosca_deploymentplan":
-		if optimusdb.DsTOSCA_DeploymentPlan == nil {
-			return nil, fmt.Errorf("DsTOSCA_DeploymentPlan store not initialized")
-		}
-		dbDocStore = *optimusdb.DsTOSCA_DeploymentPlan
-		storeName = "tosca_deploymentplan"
-	case "tosca_eventhistory":
-		if optimusdb.DsTOSCA_EventHistory == nil {
-			return nil, fmt.Errorf("DsTOSCA_EventHistory store not initialized")
-		}
-		dbDocStore = *optimusdb.DsTOSCA_EventHistory
-		storeName = "tosca_eventhistory"
-	case "whoiswho":
-		if optimusdb.WhoiswhoStore == nil {
-			return nil, fmt.Errorf("WhoiswhoStore store not initialized")
-		}
-		dbDocStore = *optimusdb.WhoiswhoStore
-		storeName = "whoiswho"
-	case "validations":
-		if optimusdb.Validations == nil {
-			return nil, fmt.Errorf("Validations store not initialized")
-		}
-		dbDocStore = *optimusdb.Validations
-		storeName = "validations"
-	default:
-		if optimusdb.DsSWres == nil {
-			return nil, fmt.Errorf("default DsSWres store not initialized")
-		}
-		dbDocStore = *optimusdb.DsSWres
-		storeName = "dsswres"
+	// StoreCreate: a read against a store that does not exist yet
+	// materialises it and returns an empty result, instead of silently
+	// reading dsswres and returning another store's documents. The store
+	// is then live — replicating, queryable, and included in backups.
+	dbDocStore, storeName, err := optimusdb.ResolveDocStore(ctx, dbtype, StoreCreate)
+	if err != nil {
+		logger.Error("[ERROR] CRUDGET: %v", err)
+		return nil, err
 	}
 
 	var finalResults []map[string]interface{}
@@ -1144,91 +1073,15 @@ func crudPutDocStoreRev(optimusdb *KnowledgeBaseDB, logChan chan Log,
 	}
 
 	// Select DocumentStore
-	var dbDocStore iface.DocumentStore
-	var storeName string
-
-	switch strings.ToLower(dbtype) {
-	case "dsswres":
-		if optimusdb.DsSWres == nil {
-			return nil, fmt.Errorf("DsSWres store not initialized")
-		}
-		dbDocStore = *optimusdb.DsSWres
-		storeName = "dsswres"
-
-	case "dsswresaloc":
-		if optimusdb.DsSWresaloc == nil {
-			return nil, fmt.Errorf("DsSWresaloc store not initialized")
-		}
-		dbDocStore = *optimusdb.DsSWresaloc
-		storeName = "dsswresaloc"
-
-	case "kbmetadata":
-		if optimusdb.KBMetadata == nil {
-			return nil, fmt.Errorf("KBMetadata store not initialized")
-		}
-		dbDocStore = *optimusdb.KBMetadata
-		storeName = "kbmetadata"
-
-	case "kbdata":
-		if optimusdb.KBdata == nil {
-			return nil, fmt.Errorf("KBdata store not initialized")
-		}
-		dbDocStore = *optimusdb.KBdata
-		storeName = "kbdata"
-	case "tosca_imported":
-		if optimusdb.DsTOSCA_Imported == nil {
-			return nil, fmt.Errorf("DsTOSCA_Imported store not initialized")
-		}
-		dbDocStore = *optimusdb.DsTOSCA_Imported
-		storeName = "tosca_imported"
-
-	case "tosca_adt":
-		if optimusdb.DsTOSCA_ADT == nil {
-			return nil, fmt.Errorf("DsTOSCA_ADT store not initialized")
-		}
-		dbDocStore = *optimusdb.DsTOSCA_ADT
-		storeName = "tosca_adt"
-
-	case "tosca_capacities":
-		if optimusdb.DsTOSCA_Capacities == nil {
-			return nil, fmt.Errorf("DsTOSCA_Capacities store not initialized")
-		}
-		dbDocStore = *optimusdb.DsTOSCA_Capacities
-		storeName = "tosca_capacities"
-
-	case "tosca_deploymentplan":
-		if optimusdb.DsTOSCA_DeploymentPlan == nil {
-			return nil, fmt.Errorf("DsTOSCA_DeploymentPlan store not initialized")
-		}
-		dbDocStore = *optimusdb.DsTOSCA_DeploymentPlan
-		storeName = "tosca_deploymentplan"
-
-	case "tosca_eventhistory":
-		if optimusdb.DsTOSCA_EventHistory == nil {
-			return nil, fmt.Errorf("DsTOSCA_EventHistory store not initialized")
-		}
-		dbDocStore = *optimusdb.DsTOSCA_EventHistory
-		storeName = "tosca_eventhistory"
-
-	case "whoiswho":
-		if optimusdb.WhoiswhoStore == nil {
-			return nil, fmt.Errorf("WhoiswhoStore store not initialized")
-		}
-		dbDocStore = *optimusdb.WhoiswhoStore
-		storeName = "whoiswho"
-
-	case "validations":
-		if optimusdb.Validations == nil {
-			return nil, fmt.Errorf("Validations store not initialized")
-		}
-		dbDocStore = *optimusdb.Validations
-		storeName = "validations"
-	default:
-		if optimusdb.DsSWres == nil {
-			return nil, fmt.Errorf("default DsSWres store not initialized")
-		}
-		dbDocStore = *optimusdb.DsSWres
-		storeName = "dsswres"
+	// Resolve the target store. StoreCreate: a write addressed to a store
+	// that does not exist yet creates it (subject to -dynamic-stores), so
+	// clients can introduce a store such as "kbtrust" simply by writing to
+	// it. The old `default: -> DsSWres` fallback is gone: an unknown dstype
+	// is never silently redirected.
+	dbDocStore, storeName, err := optimusdb.ResolveDocStore(ctx, dbtype, StoreCreate)
+	if err != nil {
+		logger.Error("[ERROR] CRUDPUT: %v", err)
+		return nil, err
 	}
 
 	logger.Info("[INFO] CRUDPUT: Inserting %d documents into %s", len(dataRecords), storeName)
@@ -2294,71 +2147,13 @@ func QueryUsingSQL(optimusdb *KnowledgeBaseDB, sqlQuery *SQLQuery) ([]map[string
 // Falls back to DsSWres if dstype is empty or unrecognized.
 // =============================================================================
 
+// resolveDocStoreByType resolves a dstype to a live document store.
+// Thin wrapper over ResolveDocStore so existing call sites compile unchanged.
+// StoreCreate: a store named here for the first time is created and returned,
+// never aliased onto dsswres.
 func resolveDocStoreByType(kb *KnowledgeBaseDB, dstype string) (iface.DocumentStore, error) {
-	switch strings.ToLower(dstype) {
-	case "kbmetadata":
-		if kb.KBMetadata == nil {
-			return nil, fmt.Errorf("KBMetadata store not initialized")
-		}
-		return *kb.KBMetadata, nil
-	case "kbdata":
-		if kb.KBdata == nil {
-			return nil, fmt.Errorf("KBdata store not initialized")
-		}
-		return *kb.KBdata, nil
-	case "dsswresaloc":
-		if kb.DsSWresaloc == nil {
-			return nil, fmt.Errorf("DsSWresaloc store not initialized")
-		}
-		return *kb.DsSWresaloc, nil
-	case "tosca_imported":
-		if kb.DsTOSCA_Imported == nil {
-			return nil, fmt.Errorf("DsTOSCA_Imported store not initialized")
-		}
-		return *kb.DsTOSCA_Imported, nil
-	case "tosca_adt":
-		if kb.DsTOSCA_ADT == nil {
-			return nil, fmt.Errorf("DsTOSCA_ADT store not initialized")
-		}
-		return *kb.DsTOSCA_ADT, nil
-	case "tosca_capacities":
-		if kb.DsTOSCA_Capacities == nil {
-			return nil, fmt.Errorf("DsTOSCA_Capacities store not initialized")
-		}
-		return *kb.DsTOSCA_Capacities, nil
-	case "tosca_deploymentplan":
-		if kb.DsTOSCA_DeploymentPlan == nil {
-			return nil, fmt.Errorf("DsTOSCA_DeploymentPlan store not initialized")
-		}
-		return *kb.DsTOSCA_DeploymentPlan, nil
-	case "tosca_eventhistory":
-		if kb.DsTOSCA_EventHistory == nil {
-			return nil, fmt.Errorf("DsTOSCA_EventHistory store not initialized")
-		}
-		return *kb.DsTOSCA_EventHistory, nil
-	case "whoiswho":
-		if kb.WhoiswhoStore == nil {
-			return nil, fmt.Errorf("WhoiswhoStore store not initialized")
-		}
-		return *kb.WhoiswhoStore, nil
-	case "validations":
-		if kb.Validations == nil {
-			return nil, fmt.Errorf("Validations store not initialized")
-		}
-		return *kb.Validations, nil
-	case "dsswres", "":
-		if kb.DsSWres == nil {
-			return nil, fmt.Errorf("DsSWres store not initialized")
-		}
-		return *kb.DsSWres, nil
-	default:
-		// Unrecognized dstype — fall back to DsSWres
-		if kb.DsSWres == nil {
-			return nil, fmt.Errorf("DsSWres store not initialized (fallback for dstype=%s)", dstype)
-		}
-		logger.Warn("Unrecognized dstype '%s', falling back to DsSWres", dstype)
-		return *kb.DsSWres, nil
-	}
+	ds, _, err := kb.ResolveDocStore(context.Background(), dstype, StoreCreate)
+	return ds, err
 }
 
 // FIXED queryLocalDB - Now with Nested Path Support + DSType-aware store selection
@@ -3469,82 +3264,14 @@ func queryOnePeer(ctx context.Context, hostNode host.Host, peerID peer.ID, crite
 func crudDeleteDocStoreRev(optimusdb *KnowledgeBaseDB, dstype string, criteria []map[string]interface{}) (int, error) {
 	ctx := context.Background()
 
-	var dbDocStore iface.DocumentStore
-	var storeName string
-
-	switch strings.ToLower(dstype) {
-	case "dsswres":
-		if optimusdb.DsSWres == nil {
-			return 0, fmt.Errorf("DsSWres store not initialized")
-		}
-		dbDocStore = *optimusdb.DsSWres
-		storeName = "dsswres"
-	case "dsswresaloc":
-		if optimusdb.DsSWresaloc == nil {
-			return 0, fmt.Errorf("DsSWresaloc store not initialized")
-		}
-		dbDocStore = *optimusdb.DsSWresaloc
-		storeName = "dsswresaloc"
-	case "kbmetadata":
-		if optimusdb.KBMetadata == nil {
-			return 0, fmt.Errorf("KBMetadata store not initialized")
-		}
-		dbDocStore = *optimusdb.KBMetadata
-		storeName = "kbmetadata"
-	case "kbdata":
-		if optimusdb.KBdata == nil {
-			return 0, fmt.Errorf("KBdata store not initialized")
-		}
-		dbDocStore = *optimusdb.KBdata
-		storeName = "kbdata"
-	case "tosca_imported":
-		if optimusdb.DsTOSCA_Imported == nil {
-			return 0, fmt.Errorf("DsTOSCA_Imported store not initialized")
-		}
-		dbDocStore = *optimusdb.DsTOSCA_Imported
-		storeName = "tosca_imported"
-	case "tosca_adt":
-		if optimusdb.DsTOSCA_ADT == nil {
-			return 0, fmt.Errorf("DsTOSCA_ADT store not initialized")
-		}
-		dbDocStore = *optimusdb.DsTOSCA_ADT
-		storeName = "tosca_adt"
-	case "tosca_capacities":
-		if optimusdb.DsTOSCA_Capacities == nil {
-			return 0, fmt.Errorf("DsTOSCA_Capacities store not initialized")
-		}
-		dbDocStore = *optimusdb.DsTOSCA_Capacities
-		storeName = "tosca_capacities"
-	case "tosca_deploymentplan":
-		if optimusdb.DsTOSCA_DeploymentPlan == nil {
-			return 0, fmt.Errorf("DsTOSCA_DeploymentPlan store not initialized")
-		}
-		dbDocStore = *optimusdb.DsTOSCA_DeploymentPlan
-		storeName = "tosca_deploymentplan"
-	case "tosca_eventhistory":
-		if optimusdb.DsTOSCA_EventHistory == nil {
-			return 0, fmt.Errorf("DsTOSCA_EventHistory store not initialized")
-		}
-		dbDocStore = *optimusdb.DsTOSCA_EventHistory
-		storeName = "tosca_eventhistory"
-	case "whoiswho":
-		if optimusdb.WhoiswhoStore == nil {
-			return 0, fmt.Errorf("WhoiswhoStore store not initialized")
-		}
-		dbDocStore = *optimusdb.WhoiswhoStore
-		storeName = "whoiswho"
-	case "validations":
-		if optimusdb.Validations == nil {
-			return 0, fmt.Errorf("Validations store not initialized")
-		}
-		dbDocStore = *optimusdb.Validations
-		storeName = "validations"
-	default:
-		if optimusdb.DsSWres == nil {
-			return 0, fmt.Errorf("default DsSWres store not initialized")
-		}
-		dbDocStore = *optimusdb.DsSWres
-		storeName = "dsswres"
+	// StoreCreate: keeps store addressing uniform across every verb. A
+	// delete against a store that does not exist yet materialises it and
+	// removes nothing — which is correct, and far better than the old
+	// behaviour of deleting matching documents out of dsswres.
+	dbDocStore, storeName, err := optimusdb.ResolveDocStore(ctx, dstype, StoreCreate)
+	if err != nil {
+		logger.Error("[ERROR] CRUDDELETE: %v", err)
+		return 0, err
 	}
 
 	if len(criteria) == 0 {
@@ -3667,82 +3394,12 @@ func crudUpdateDocStoreRev(optimusdb *KnowledgeBaseDB, dstype string, criteria [
 
 	ctx := context.Background()
 
-	var dbDocStore iface.DocumentStore
-	var storeName string
-
-	switch strings.ToLower(dstype) {
-	case "dsswres":
-		if optimusdb.DsSWres == nil {
-			return 0, fmt.Errorf("DsSWres store not initialized")
-		}
-		dbDocStore = *optimusdb.DsSWres
-		storeName = "dsswres"
-	case "dsswresaloc":
-		if optimusdb.DsSWresaloc == nil {
-			return 0, fmt.Errorf("DsSWresaloc store not initialized")
-		}
-		dbDocStore = *optimusdb.DsSWresaloc
-		storeName = "dsswresaloc"
-	case "kbmetadata":
-		if optimusdb.KBMetadata == nil {
-			return 0, fmt.Errorf("KBMetadata store not initialized")
-		}
-		dbDocStore = *optimusdb.KBMetadata
-		storeName = "kbmetadata"
-	case "kbdata":
-		if optimusdb.KBdata == nil {
-			return 0, fmt.Errorf("KBdata store not initialized")
-		}
-		dbDocStore = *optimusdb.KBdata
-		storeName = "kbdata"
-	case "tosca_imported":
-		if optimusdb.DsTOSCA_Imported == nil {
-			return 0, fmt.Errorf("DsTOSCA_Imported store not initialized")
-		}
-		dbDocStore = *optimusdb.DsTOSCA_Imported
-		storeName = "tosca_imported"
-	case "tosca_adt":
-		if optimusdb.DsTOSCA_ADT == nil {
-			return 0, fmt.Errorf("DsTOSCA_ADT store not initialized")
-		}
-		dbDocStore = *optimusdb.DsTOSCA_ADT
-		storeName = "tosca_adt"
-	case "tosca_capacities":
-		if optimusdb.DsTOSCA_Capacities == nil {
-			return 0, fmt.Errorf("DsTOSCA_Capacities store not initialized")
-		}
-		dbDocStore = *optimusdb.DsTOSCA_Capacities
-		storeName = "tosca_capacities"
-	case "tosca_deploymentplan":
-		if optimusdb.DsTOSCA_DeploymentPlan == nil {
-			return 0, fmt.Errorf("DsTOSCA_DeploymentPlan store not initialized")
-		}
-		dbDocStore = *optimusdb.DsTOSCA_DeploymentPlan
-		storeName = "tosca_deploymentplan"
-	case "tosca_eventhistory":
-		if optimusdb.DsTOSCA_EventHistory == nil {
-			return 0, fmt.Errorf("DsTOSCA_EventHistory store not initialized")
-		}
-		dbDocStore = *optimusdb.DsTOSCA_EventHistory
-		storeName = "tosca_eventhistory"
-	case "whoiswho":
-		if optimusdb.WhoiswhoStore == nil {
-			return 0, fmt.Errorf("WhoiswhoStore store not initialized")
-		}
-		dbDocStore = *optimusdb.WhoiswhoStore
-		storeName = "whoiswho"
-	case "validations":
-		if optimusdb.Validations == nil {
-			return 0, fmt.Errorf("Validations store not initialized")
-		}
-		dbDocStore = *optimusdb.Validations
-		storeName = "validations"
-	default:
-		if optimusdb.DsSWres == nil {
-			return 0, fmt.Errorf("default DsSWres store not initialized")
-		}
-		dbDocStore = *optimusdb.DsSWres
-		storeName = "dsswres"
+	// StoreCreate: as with delete, the store is materialised and the update
+	// matches nothing, rather than updating documents in dsswres.
+	dbDocStore, storeName, err := optimusdb.ResolveDocStore(ctx, dstype, StoreCreate)
+	if err != nil {
+		logger.Error("[ERROR] CRUDUPDATE: %v", err)
+		return 0, err
 	}
 
 	if len(criteria) == 0 {
@@ -4414,4 +4071,399 @@ func docFieldsToStringMap(doc map[string]interface{}) map[string]string {
 		}
 	}
 	return out
+}
+
+// ============================================================================
+// DYNAMIC DOCUMENT STORE REGISTRY
+// ============================================================================
+//
+// Single source of truth for document-store resolution. Types (StoreMode,
+// StoreInfo, DefaultStoreName) are declared in app.go beside the
+// KnowledgeBaseDB struct; the behaviour lives here.
+//
+// Why this exists: every CRUD entry point used to carry its own
+// `switch strings.ToLower(dstype)` with a `default:` branch that fell back to
+// DsSWres. An unknown dstype was accepted on write AND on read, so the
+// round-trip succeeded and the caller never learned the data had landed in a
+// different store. The four CRUD functions, resolveDocStoreByType,
+// unifiedQueryDocStore, FetchDocument (app.go), resolveTargetStore and
+// createKBQueryFunc (api/http.go) all delegate here now.
+//
+// Store names are NOT fixed at compile time. Naming a store is how you create
+// it: the first request that mentions a new name materialises a real OrbitDB
+// docstore for it — replicated, queryable through the normal dstype paths,
+// listed by GET /api/v1/stores, and reopened after a restart from the address
+// persisted in <repo>_config. The eleven stores opened in initPeer.go are
+// simply the ones that exist from boot; they are not a closed set.
+//
+// The one thing that never happens is the old behaviour: a dstype is never
+// silently redirected to another store. Either it resolves to the store you
+// named, or -dynamic-stores=false is set and you get an explicit error.
+//
+// Backups follow automatically — backupfunc calls AllDocStores() rather than
+// keeping its own hardcoded list, so a store created at runtime is exported
+// and imported with no further code.
+
+// storeNamePattern constrains dynamic store names. The name becomes a
+// directory under the orbitdb cache root, so separators, dot segments and
+// whitespace are rejected outright.
+var storeNamePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{1,62}$`)
+
+// reservedStoreNames cannot be used for a dynamic store. "contributions" is an
+// EventLogStore, not a docstore — resolving it here would hand callers a store
+// whose API they cannot use. The rest collide with archive layout entries.
+var reservedStoreNames = map[string]struct{}{
+	"contributions": {},
+	"sqlite":        {},
+	"manifest":      {},
+	"orbitdb":       {},
+}
+
+// ----------------------------------------------------------------------------
+// Built-in stores
+// ----------------------------------------------------------------------------
+
+// builtinDocStores returns the eleven compile-time document stores. The
+// contributions EventLog is excluded — it is not a DocumentStore. Nil pointers
+// and nil interface values are skipped so callers never dereference a store
+// that failed to open at boot.
+func (kb *KnowledgeBaseDB) builtinDocStores() map[string]*orbitdb.DocumentStore {
+	m := make(map[string]*orbitdb.DocumentStore, 12)
+	add := func(name string, ptr *orbitdb.DocumentStore) {
+		if ptr != nil && *ptr != nil {
+			m[name] = ptr
+		}
+	}
+	add("validations", kb.Validations)
+	add("kbdata", kb.KBdata)
+	add("kbmetadata", kb.KBMetadata)
+	add("whoiswho", kb.WhoiswhoStore)
+	add("dsswres", kb.DsSWres)
+	add("dsswresaloc", kb.DsSWresaloc)
+	add("tosca_imported", kb.DsTOSCA_Imported)
+	add("tosca_adt", kb.DsTOSCA_ADT)
+	add("tosca_capacities", kb.DsTOSCA_Capacities)
+	add("tosca_deploymentplan", kb.DsTOSCA_DeploymentPlan)
+	add("tosca_eventhistory", kb.DsTOSCA_EventHistory)
+	return m
+}
+
+// IsBuiltinStore reports whether name is one of the compile-time stores.
+func (kb *KnowledgeBaseDB) IsBuiltinStore(name string) bool {
+	_, ok := kb.builtinDocStores()[strings.ToLower(strings.TrimSpace(name))]
+	return ok
+}
+
+// AllDocStores returns every live document store on this node — built-in and
+// dynamic — keyed by the lowercase names the /command API uses.
+//
+// backupfunc.storeRegistry() delegates to this, which is what makes a store
+// created at runtime appear in export and import with no further code.
+func (kb *KnowledgeBaseDB) AllDocStores() map[string]*orbitdb.DocumentStore {
+	m := kb.builtinDocStores()
+
+	kb.dynMu.RLock()
+	defer kb.dynMu.RUnlock()
+	for name, ptr := range kb.DynamicStores {
+		if ptr != nil && *ptr != nil {
+			m[name] = ptr
+		}
+	}
+	return m
+}
+
+// KnownStoreNames returns a sorted list of resolvable store names, used to
+// build error messages that tell the caller what they could have asked for.
+func (kb *KnowledgeBaseDB) KnownStoreNames() []string {
+	all := kb.AllDocStores()
+	names := make([]string, 0, len(all))
+	for n := range all {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+	return names
+}
+
+// ListStores returns metadata for every live document store.
+func (kb *KnowledgeBaseDB) ListStores() []StoreInfo {
+	builtin := kb.builtinDocStores()
+	all := kb.AllDocStores()
+
+	out := make([]StoreInfo, 0, len(all))
+	for _, name := range kb.KnownStoreNames() {
+		kind := "dynamic"
+		if _, ok := builtin[name]; ok {
+			kind = "builtin"
+		}
+		addr := ""
+		if ptr := all[name]; ptr != nil && *ptr != nil {
+			addr = (*ptr).Address().String()
+		}
+		out = append(out, StoreInfo{Name: name, Kind: kind, Address: addr})
+	}
+	return out
+}
+
+// ----------------------------------------------------------------------------
+// Resolution
+// ----------------------------------------------------------------------------
+
+// ResolveDocStore is the single entry point every store-addressed path uses:
+//
+//	ds, name, err := kb.ResolveDocStore(ctx, dstype, app.StoreCreate)
+//
+// It never silently redirects. In StoreCreate mode — which is what every call
+// site uses — an unrecognised name becomes a new document store and the event
+// is logged at INFO. In StoreLookup mode it returns an error naming the stores
+// that do exist.
+//
+// Empty dstype resolves to DefaultStoreName for backward compatibility.
+func (kb *KnowledgeBaseDB) ResolveDocStore(
+	ctx context.Context, dstype string, mode StoreMode,
+) (iface.DocumentStore, string, error) {
+
+	name := strings.ToLower(strings.TrimSpace(dstype))
+	if name == "" {
+		name = DefaultStoreName // documented default, not a fallback
+	}
+
+	if name == "contributions" {
+		return nil, "", fmt.Errorf(
+			"dstype %q is an EventLog store, not a document store", dstype)
+	}
+
+	// 1) built-in
+	if ptr, ok := kb.builtinDocStores()[name]; ok {
+		return *ptr, name, nil
+	}
+
+	// 2) dynamic store already open
+	kb.dynMu.RLock()
+	ptr, ok := kb.DynamicStores[name]
+	kb.dynMu.RUnlock()
+	if ok && ptr != nil && *ptr != nil {
+		return *ptr, name, nil
+	}
+
+	// 3) unknown
+	if mode != StoreCreate {
+		return nil, "", fmt.Errorf(
+			"unknown dstype %q — known stores: %s (create one with POST /api/v1/stores)",
+			dstype, strings.Join(kb.KnownStoreNames(), ", "))
+	}
+
+	if !*config.FlagDynamicStores {
+		return nil, "", fmt.Errorf(
+			"unknown dstype %q and implicit store creation is disabled "+
+				"(-dynamic-stores=false); create it explicitly with POST /api/v1/stores",
+			dstype)
+	}
+
+	ds, err := kb.EnsureDocStore(ctx, name)
+	if err != nil {
+		return nil, "", err
+	}
+	return ds, name, nil
+}
+
+// EnsureDocStore opens a dynamic document store, creating it if needed. Safe
+// to call repeatedly — the second call returns the cached handle.
+//
+// Callers: ResolveDocStore in StoreCreate mode, the POST /api/v1/stores
+// handler, and backupfunc.Import for stores in an archive that are not open
+// on this node.
+func (kb *KnowledgeBaseDB) EnsureDocStore(
+	ctx context.Context, name string,
+) (iface.DocumentStore, error) {
+
+	name = strings.ToLower(strings.TrimSpace(name))
+
+	if ptr, ok := kb.builtinDocStores()[name]; ok {
+		return *ptr, nil
+	}
+	if err := ValidateStoreName(name); err != nil {
+		return nil, err
+	}
+	if kb.Orbit == nil || *kb.Orbit == nil {
+		return nil, fmt.Errorf("OrbitDB is not initialised yet")
+	}
+
+	kb.dynMu.Lock()
+	defer kb.dynMu.Unlock()
+
+	// Re-check under the write lock: two concurrent writes to the same new
+	// store would otherwise both try to open it.
+	if ptr, ok := kb.DynamicStores[name]; ok && ptr != nil && *ptr != nil {
+		return *ptr, nil
+	}
+
+	// Prefer the persisted OrbitDB address so a restart reattaches to the same
+	// log rather than creating a fresh, empty one.
+	addr := name
+	if kb.Config != nil && kb.Config.DynamicStoreAddrs != nil {
+		if a, ok := kb.Config.DynamicStoreAddrs[name]; ok && a != "" {
+			addr = a
+		}
+	}
+
+	dir := filepath.Join(orbitCacheRoot(), name)
+	docstoreOpt := documentstore.DefaultStoreOptsForMap("path")
+
+	// Same access profile as the TOSCA stores in initPeer.go: open read and
+	// write so peers replicate. Tighten per store later if required.
+	fullRW := &accesscontroller.CreateAccessControllerOptions{
+		Access: map[string][]string{
+			"write": {"*"},
+			"read":  {"*"},
+		},
+	}
+
+	dbopts := orbitdb.CreateDBOptions{
+		Create:            boolPtr(true),
+		StoreType:         stringPtr("docstore"),
+		StoreSpecificOpts: docstoreOpt,
+		Overwrite:         boolPtr(false),
+		AccessController:  fullRW,
+		Directory:         &dir,
+		Replicate:         boolPtr(true),
+		EventBus:          eventbus.NewBus(),
+		Timeout:           setTimeOut(5),
+	}
+
+	store, err := (*kb.Orbit).Open(ctx, addr, &dbopts)
+	if err != nil {
+		return nil, fmt.Errorf("open dynamic store %q: %w", name, err)
+	}
+
+	ds, ok := store.(iface.DocumentStore)
+	if !ok {
+		_ = store.Close()
+		return nil, fmt.Errorf("store %q exists but is not a document store", name)
+	}
+
+	// Replay the local OpLog. Without this the docstore index is empty and
+	// every query — including the export scan — returns nothing.
+	if err := ds.Load(ctx, -1); err != nil {
+		logger.Warn("[DYNSTORE] load %q returned: %v (continuing)", name, err)
+	}
+
+	if kb.DynamicStores == nil {
+		kb.DynamicStores = make(map[string]*orbitdb.DocumentStore)
+	}
+	kb.DynamicStores[name] = &ds
+
+	kb.persistDynamicAddrLocked(name, ds.Address().String())
+
+	logger.Info("[DYNSTORE] store %q ready at %s", name, ds.Address().String())
+	return ds, nil
+}
+
+// DropDynamicStore closes a dynamic store and forgets its address. The on-disk
+// OpLog and any peer replicas are left alone — this detaches, it does not
+// delete data. Built-in stores cannot be dropped.
+func (kb *KnowledgeBaseDB) DropDynamicStore(name string) error {
+	name = strings.ToLower(strings.TrimSpace(name))
+	if kb.IsBuiltinStore(name) {
+		return fmt.Errorf("%q is a built-in store and cannot be dropped", name)
+	}
+
+	kb.dynMu.Lock()
+	defer kb.dynMu.Unlock()
+
+	ptr, ok := kb.DynamicStores[name]
+	if !ok {
+		return fmt.Errorf("dynamic store %q is not open", name)
+	}
+	if ptr != nil && *ptr != nil {
+		_ = (*ptr).Close()
+	}
+	delete(kb.DynamicStores, name)
+
+	if kb.Config != nil && kb.Config.DynamicStoreAddrs != nil {
+		delete(kb.Config.DynamicStoreAddrs, name)
+		saveConfigBestEffort(kb.Config)
+	}
+	logger.Info("[DYNSTORE] dropped dynamic store %q", name)
+	return nil
+}
+
+// RestoreDynamicStores reopens every dynamic store recorded in the node
+// config. Called at the end of InitPeer, after kb.Config is assigned.
+//
+// Failures are logged and skipped: one unreachable store must not stop the
+// agent from starting.
+func (kb *KnowledgeBaseDB) RestoreDynamicStores(ctx context.Context) {
+	if kb.Config == nil || len(kb.Config.DynamicStoreAddrs) == 0 {
+		return
+	}
+
+	names := make([]string, 0, len(kb.Config.DynamicStoreAddrs))
+	for n := range kb.Config.DynamicStoreAddrs {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+
+	restored := 0
+	for _, name := range names {
+		if _, err := kb.EnsureDocStore(ctx, name); err != nil {
+			logger.Error("[DYNSTORE] could not restore %q: %v", name, err)
+			continue
+		}
+		restored++
+	}
+	logger.Info("[DYNSTORE] restored %d of %d dynamic store(s)", restored, len(names))
+}
+
+// ----------------------------------------------------------------------------
+// Helpers
+// ----------------------------------------------------------------------------
+
+// ValidateStoreName enforces the naming rules for dynamic stores. The name is
+// used as a directory under the orbitdb cache root, so path separators, dot
+// segments and whitespace are rejected.
+func ValidateStoreName(name string) error {
+	if name == "" {
+		return fmt.Errorf("store name is empty")
+	}
+	if _, bad := reservedStoreNames[name]; bad {
+		return fmt.Errorf("store name %q is reserved", name)
+	}
+	if !storeNamePattern.MatchString(name) {
+		return fmt.Errorf(
+			"invalid store name %q: use 2-63 chars, lowercase letters, digits, "+
+				"underscore or hyphen, starting with a letter or digit", name)
+	}
+	return nil
+}
+
+// orbitCacheRoot mirrors the cache path computed in InitPeer so dynamic stores
+// land beside the built-in ones.
+func orbitCacheRoot() string {
+	return filepath.Join(os.Getenv("HOME"), ".cache", "optimusdb", *config.FlagRepo, "orbitdb")
+}
+
+// persistDynamicAddrLocked records the OrbitDB address and flushes the config
+// file immediately. The config is otherwise written only on shutdown
+// (main.go), which would lose the address on an unclean exit and leave the
+// store's OpLog orphaned on disk.
+//
+// Caller must hold kb.dynMu.
+func (kb *KnowledgeBaseDB) persistDynamicAddrLocked(name, addr string) {
+	if kb.Config == nil || addr == "" {
+		return
+	}
+	if kb.Config.DynamicStoreAddrs == nil {
+		kb.Config.DynamicStoreAddrs = make(map[string]string)
+	}
+	if kb.Config.DynamicStoreAddrs[name] == addr {
+		return
+	}
+	kb.Config.DynamicStoreAddrs[name] = addr
+	saveConfigBestEffort(kb.Config)
+}
+
+func saveConfigBestEffort(conf *config.Config) {
+	if err := config.SaveStructAsJSON(conf, *config.FlagRepo+"_config"); err != nil {
+		logger.Warn("[DYNSTORE] could not persist config: %v", err)
+	}
 }

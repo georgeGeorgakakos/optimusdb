@@ -104,61 +104,149 @@ func LogsHandler(kb *app.LoggerSQLite) http.HandlerFunc {
 
 // resolveTargetStore maps a dstype string to the correct OrbitDB DocumentStore pointer.
 // Returns (store pointer, store name for logging, error if not found/initialized).
+// resolveTargetStore resolves an upload target to a live document store.
+//
+// Delegates to app.ResolveDocStore, the single resolver shared with every
+// CRUD path (see app/service.go, DYNAMIC DOCUMENT STORE REGISTRY). The
+// eleven-case switch that used to live here is gone.
+//
+// StoreCreate: a client may upload straight into a store that does not exist
+// yet and it will be created, subject to -dynamic-stores. An unknown dstype
+// is never silently redirected to dsswres.
+//
+// The pointer return is kept because callers expect *orbitdb.DocumentStore.
+// orbitdb.DocumentStore is an alias for iface.DocumentStore, so taking the
+// address of the resolved interface value satisfies the signature.
 func resolveTargetStore(optimusdb *app.KnowledgeBaseDB, dstype string) (*orbitdb.DocumentStore, string, error) {
-	switch strings.ToLower(dstype) {
-	case "dsswres", "":
-		if optimusdb.DsSWres == nil {
-			return nil, "", fmt.Errorf("DsSWres store not initialized")
-		}
-		return optimusdb.DsSWres, "dsswres", nil
-	case "dsswresaloc":
-		if optimusdb.DsSWresaloc == nil {
-			return nil, "", fmt.Errorf("DsSWresaloc store not initialized")
-		}
-		return optimusdb.DsSWresaloc, "dsswresaloc", nil
-	case "kbmetadata":
-		if optimusdb.KBMetadata == nil {
-			return nil, "", fmt.Errorf("KBMetadata store not initialized")
-		}
-		return optimusdb.KBMetadata, "kbmetadata", nil
-	case "kbdata":
-		if optimusdb.KBdata == nil {
-			return nil, "", fmt.Errorf("KBdata store not initialized")
-		}
-		return optimusdb.KBdata, "kbdata", nil
-	case "tosca_imported":
-		if optimusdb.DsTOSCA_Imported == nil {
-			return nil, "", fmt.Errorf("DsTOSCA_Imported store not initialized")
-		}
-		return optimusdb.DsTOSCA_Imported, "tosca_imported", nil
-	case "tosca_adt":
-		if optimusdb.DsTOSCA_ADT == nil {
-			return nil, "", fmt.Errorf("DsTOSCA_ADT store not initialized")
-		}
-		return optimusdb.DsTOSCA_ADT, "tosca_adt", nil
-	case "tosca_capacities":
-		if optimusdb.DsTOSCA_Capacities == nil {
-			return nil, "", fmt.Errorf("DsTOSCA_Capacities store not initialized")
-		}
-		return optimusdb.DsTOSCA_Capacities, "tosca_capacities", nil
-	case "tosca_deploymentplan":
-		if optimusdb.DsTOSCA_DeploymentPlan == nil {
-			return nil, "", fmt.Errorf("DsTOSCA_DeploymentPlan store not initialized")
-		}
-		return optimusdb.DsTOSCA_DeploymentPlan, "tosca_deploymentplan", nil
-	case "tosca_eventhistory":
-		if optimusdb.DsTOSCA_EventHistory == nil {
-			return nil, "", fmt.Errorf("DsTOSCA_EventHistory store not initialized")
-		}
-		return optimusdb.DsTOSCA_EventHistory, "tosca_eventhistory", nil
-	case "whoiswho":
-		if optimusdb.WhoiswhoStore == nil {
-			return nil, "", fmt.Errorf("WhoiswhoStore store not initialized")
-		}
-		return optimusdb.WhoiswhoStore, "whoiswho", nil
-	default:
-		return nil, "", fmt.Errorf("unknown store type: %s", dstype)
+	ds, name, err := optimusdb.ResolveDocStore(context.Background(), dstype, app.StoreCreate)
+	if err != nil {
+		return nil, "", err
 	}
+	return &ds, name, nil
+}
+
+// ============================================================================
+// STORE MANAGEMENT ENDPOINTS
+// ============================================================================
+// Explicit store lifecycle over HTTP. Two reasons these exist:
+//
+//  1. GET /api/v1/stores shows which stores are actually live on a node and
+//     whether each is built-in or was created at runtime — the quickest way
+//     to confirm data went where you expected.
+//  2. With -dynamic-stores=false, implicit creation on write is off and a
+//     typo'd dstype becomes a hard error. Stores must then be declared here
+//     first. Use that in production.
+
+type createStoreRequest struct {
+	Name string `json:"name"`
+}
+
+type createStoreResponse struct {
+	Name    string `json:"name"`
+	Address string `json:"address"`
+	Created bool   `json:"created"`
+}
+
+// storesHandler serves GET (list) and POST (create) on /api/v1/stores.
+func storesHandler(kb *app.KnowledgeBaseDB) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+
+		switch r.Method {
+		case http.MethodOptions:
+			w.WriteHeader(http.StatusNoContent)
+			return
+
+		case http.MethodGet:
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
+				"stores": kb.ListStores(),
+			})
+			return
+
+		case http.MethodPost:
+			var req createStoreRequest
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				storeError(w, http.StatusBadRequest, "invalid JSON body: "+err.Error())
+				return
+			}
+			name := strings.ToLower(strings.TrimSpace(req.Name))
+			if name == "" {
+				storeError(w, http.StatusBadRequest, `field "name" is required`)
+				return
+			}
+			if !kb.IsBuiltinStore(name) {
+				if err := app.ValidateStoreName(name); err != nil {
+					storeError(w, http.StatusBadRequest, err.Error())
+					return
+				}
+			}
+
+			// Was it already live before this call? Determines 200 vs 201.
+			existed := false
+			for _, si := range kb.ListStores() {
+				if si.Name == name {
+					existed = true
+					break
+				}
+			}
+
+			ctx, cancel := context.WithTimeout(r.Context(), app.StoreCreateTimeout)
+			defer cancel()
+
+			ds, err := kb.EnsureDocStore(ctx, name)
+			if err != nil {
+				storeError(w, http.StatusInternalServerError, err.Error())
+				return
+			}
+
+			logger.Info("[STORES] POST /stores name=%q created=%v", name, !existed)
+			if !existed {
+				w.WriteHeader(http.StatusCreated)
+			}
+			_ = json.NewEncoder(w).Encode(createStoreResponse{
+				Name:    name,
+				Address: ds.Address().String(),
+				Created: !existed,
+			})
+			return
+
+		default:
+			storeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		}
+	}
+}
+
+// storeDeleteHandler serves DELETE /api/v1/stores/{name}. It detaches the
+// store from this node. The on-disk OpLog and any peer replicas remain, so
+// this is reversible — re-create the store and it reattaches to the same log.
+func storeDeleteHandler(kb *app.KnowledgeBaseDB) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.Method == http.MethodOptions {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+
+		name := mux.Vars(r)["name"]
+		if name == "" {
+			parts := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
+			name = parts[len(parts)-1]
+		}
+
+		if err := kb.DropDynamicStore(name); err != nil {
+			storeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"name":     name,
+			"detached": true,
+		})
+	}
+}
+
+func storeError(w http.ResponseWriter, code int, msg string) {
+	w.WriteHeader(code)
+	_ = json.NewEncoder(w).Encode(map[string]string{"error": msg})
 }
 
 // uploadTOSCAHandler handles TOSCA template uploads with optional full structure storage
@@ -1885,6 +1973,16 @@ func RegisterMetadataRoutes(router *mux.Router, kb *app.KnowledgeBaseDB) {
 
 	logger.Info("[EXCHANGE] Routes registered at /api/v1/exchange/{export,import}")
 
+	// ═══════════════════════════════════════════════════════════════
+	// STORES — list / create / detach document stores
+	// ═══════════════════════════════════════════════════════════════
+	apiV1.HandleFunc("/stores", storesHandler(kb)).
+		Methods("GET", "POST", "OPTIONS")
+	apiV1.HandleFunc("/stores/{name}", storeDeleteHandler(kb)).
+		Methods("DELETE", "OPTIONS")
+
+	logger.Info("[STORES] Routes registered at /api/v1/stores")
+
 }
 
 // createKBQueryFunc creates a query function that connects to OptimusDB's document stores
@@ -1892,65 +1990,21 @@ func createKBQueryFunc(kb *app.KnowledgeBaseDB) chat.QueryFunc {
 	return func(ctx context.Context, dstype string, criteria []map[string]interface{}) ([]map[string]interface{}, error) {
 		logger.Debug("[CHAT-QUERY] Executing query on dstype=%s with %d criteria", dstype, len(criteria))
 
-		// Get the appropriate store — all 11 OrbitDB docstores.
-		// Returning an explicit error (not silently falling back to dsswres)
-		// lets the chat adapter surface "I don't know that store" instead of
-		// returning wrong-store results.
-		var store interface{}
-		switch dstype {
-		case "dsswres":
-			if kb.DsSWres != nil {
-				store = *kb.DsSWres
-			}
-		case "dsswresaloc":
-			if kb.DsSWresaloc != nil {
-				store = *kb.DsSWresaloc
-			}
-		case "kbmetadata":
-			if kb.KBMetadata != nil {
-				store = *kb.KBMetadata
-			}
-		case "kbdata":
-			if kb.KBdata != nil {
-				store = *kb.KBdata
-			}
-		case "validations":
-			if kb.Validations != nil {
-				store = *kb.Validations
-			}
-		case "whoiswho":
-			if kb.WhoiswhoStore != nil {
-				store = *kb.WhoiswhoStore
-			}
-		case "tosca_adt":
-			if kb.DsTOSCA_ADT != nil {
-				store = *kb.DsTOSCA_ADT
-			}
-		case "tosca_imported":
-			if kb.DsTOSCA_Imported != nil {
-				store = *kb.DsTOSCA_Imported
-			}
-		case "tosca_capacities":
-			if kb.DsTOSCA_Capacities != nil {
-				store = *kb.DsTOSCA_Capacities
-			}
-		case "tosca_deploymentplan":
-			if kb.DsTOSCA_DeploymentPlan != nil {
-				store = *kb.DsTOSCA_DeploymentPlan
-			}
-		case "tosca_eventhistory":
-			if kb.DsTOSCA_EventHistory != nil {
-				store = *kb.DsTOSCA_EventHistory
-			}
-		default:
-			return nil, fmt.Errorf("unknown store: %s (valid: dsswres, dsswresaloc, "+
-				"kbmetadata, kbdata, validations, whoiswho, tosca_adt, tosca_imported, "+
-				"tosca_capacities, tosca_deploymentplan, tosca_eventhistory)", dstype)
+		// Resolve through the shared registry so the chat pipeline sees the
+		// same stores as every other path — including stores created at
+		// runtime.
+		//
+		// NOTE: this is the one call site where the dstype is produced by the
+		// language model rather than by a client, so StoreCreate means a
+		// hallucinated dataset name becomes an empty store. That is visible in
+		// GET /api/v1/stores and removable with DELETE /api/v1/stores/{name}.
+		// Switch this single call to app.StoreLookup if you would rather the
+		// chat pipeline answer "I don't know that dataset" instead.
+		resolved, _, err := kb.ResolveDocStore(ctx, dstype, app.StoreCreate)
+		if err != nil {
+			return nil, err
 		}
-
-		if store == nil {
-			return nil, fmt.Errorf("store %s not initialized on this node", dstype)
-		}
+		var store interface{} = resolved
 
 		// Type assert to get Query method
 		type queryable interface {

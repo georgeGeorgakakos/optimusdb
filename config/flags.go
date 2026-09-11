@@ -25,6 +25,27 @@ var FlagSwarmName = flag.String("Swarmchestrate", "", "the swarm name this agent
 var FlagMetrics = flag.Bool("metrics", true, "enable metrics for CPU,RAM,etc..")
 
 /*
+Dynamic document stores.
+
+Store names are not fixed at compile time. When true (the default) any request
+naming a store that does not exist — crudput, crudget, query, file upload,
+semantic hydration — creates that document store on demand and makes it live:
+replicated, queryable, listed by GET /api/v1/stores, included in export and
+import, and reopened after a restart.
+
+Set false to freeze the set of stores: an unknown dstype is then rejected with
+an error listing the stores that do exist, and new ones must be created
+deliberately via POST /api/v1/stores. Useful when you want a typo to fail loudly
+rather than produce an empty store.
+
+Either way an unknown dstype is NEVER silently redirected to dsswres, which was
+the old behaviour and the reason trust documents ended up mixed into the swarm
+resources store.
+*/
+var FlagDynamicStores = flag.Bool("dynamic-stores", true,
+	"allow implicit creation of a document store on first write to an unknown dstype")
+
+/*
 This is for the discocvery
 */
 var FlagAutodiscovery = flag.Bool("autodis", true, "aim to address autodiscovery under multiswarm")

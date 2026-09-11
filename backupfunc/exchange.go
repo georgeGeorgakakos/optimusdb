@@ -40,6 +40,7 @@ import (
 	"berty.tech/go-orbit-db/iface"
 
 	"optimusdb/app"
+	"optimusdb/logger"
 )
 
 // ──────────────────────────────────────────────────────────────────────
@@ -85,31 +86,19 @@ type Manifest struct {
 // Store registry
 // ──────────────────────────────────────────────────────────────────────
 
-// storeRegistry returns every non-nil *orbitdb.DocumentStore on the KB,
-// keyed by the same lowercase names your /command API already uses.
-// Stores absent from the KB (because that subsystem isn't initialised on
-// this node) are silently skipped. Export is best-effort over whatever
-// is actually live.
+// storeRegistry returns every live document store on the node — built-in
+// AND dynamic — keyed by the same lowercase names the /command API uses.
+//
+// This used to be a hardcoded add(...) list, which meant every new store
+// had to be remembered here or it silently dropped out of backups. It now
+// delegates to app.KnowledgeBaseDB.AllDocStores(), the single source of
+// truth shared with the CRUD resolver, so a store created at runtime is
+// exported without touching this file.
+//
+// Stores that failed to open on this node are skipped by AllDocStores();
+// export remains best-effort over whatever is actually live.
 func (s *Service) storeRegistry() map[string]*orbitdb.DocumentStore {
-	kb := s.KB
-	m := map[string]*orbitdb.DocumentStore{}
-	add := func(name string, ptr *orbitdb.DocumentStore) {
-		if ptr != nil {
-			m[name] = ptr
-		}
-	}
-	add("validations", kb.Validations)
-	add("kbdata", kb.KBdata)
-	add("kbmetadata", kb.KBMetadata)
-	add("whoiswho", kb.WhoiswhoStore)
-	add("dsswres", kb.DsSWres)
-	add("dsswresaloc", kb.DsSWresaloc)
-	add("tosca_adt", kb.DsTOSCA_ADT)
-	add("tosca_imported", kb.DsTOSCA_Imported)
-	add("tosca_capacities", kb.DsTOSCA_Capacities)
-	add("tosca_deploymentplan", kb.DsTOSCA_DeploymentPlan)
-	add("tosca_eventhistory", kb.DsTOSCA_EventHistory)
-	return m
+	return s.KB.AllDocStores()
 }
 
 // ──────────────────────────────────────────────────────────────────────
@@ -274,9 +263,18 @@ func (s *Service) Import(ctx context.Context, r io.Reader) (*ImportReport, error
 	for _, name := range manifest.Stores {
 		ptr, ok := registry[name]
 		if !ok || ptr == nil {
-			report.Errors = append(report.Errors,
-				fmt.Sprintf("store %q in archive but not open on this node", name))
-			continue
+			// The archive carries a store this node has never opened — almost
+			// always a dynamic store created on the source node. Create it here
+			// so a restore is faithful rather than partial. Built-in stores that
+			// failed to open are rejected by EnsureDocStore and reported below.
+			ds, err := s.KB.EnsureDocStore(ctx, name)
+			if err != nil {
+				report.Errors = append(report.Errors,
+					fmt.Sprintf("store %q in archive and could not be created here: %v", name, err))
+				continue
+			}
+			ptr = &ds
+			logger.Info("[EXCHANGE] created store %q during import", name)
 		}
 		jsonlPath := filepath.Join(staging, "orbitdb", name+".jsonl")
 		n, err := importStoreJSONL(ctx, *ptr, jsonlPath)
