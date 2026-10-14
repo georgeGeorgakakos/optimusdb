@@ -7,9 +7,11 @@ import (
 	"optimusdb/logger"
 	"os"
 	"path/filepath"
+	"strings"
 
 	optimusdbConf "optimusdb/config"
 
+	"github.com/ipfs/interface-go-ipfs-core/options"
 	config "github.com/ipfs/kubo/config"
 	"github.com/ipfs/kubo/core"
 	kubolibp2p "github.com/ipfs/kubo/core/node/libp2p"
@@ -71,8 +73,21 @@ func createDatabase(temporary bool) (string, error) {
 		return "", fmt.Errorf("failed to get dir: %s", err)
 	}
 
-	// Create a config with default options and a 2048 bit key
-	cfg, err := config.Init(io.Discard, 2048)
+	// Create a config with default options. The node's key pair is 2048-bit RSA unless OPTIMUSDB_IPFS_KEY=ed25519:
+	// every GossipSub message (e.g. each store head announcement) is signed with this key, and an RSA-2048
+	// signature costs about 1-2 ms of CPU against tens of microseconds for Ed25519 (the kubo default since v0.13).
+	// Only a new repository is affected; an existing one keeps its identity (and peer ID).
+	var cfg *config.Config
+	if strings.EqualFold(strings.TrimSpace(os.Getenv("OPTIMUSDB_IPFS_KEY")), "ed25519") {
+		ident, ierr := config.CreateIdentity(io.Discard, []options.KeyGenerateOption{options.Key.Type(options.Ed25519Key)})
+		if ierr != nil {
+			return "", ierr
+		}
+		cfg, err = config.InitWithIdentity(ident)
+		logger.Info("[INFO] IPFS identity: Ed25519")
+	} else {
+		cfg, err = config.Init(io.Discard, 2048)
+	}
 	if err != nil {
 		return "", err
 	}
@@ -147,6 +162,21 @@ func createAgentIpfs(ctx context.Context, repoPath string) (*core.IpfsNode, erro
 	repo, err := fsrepo.Open(repoPath)
 	if err != nil {
 		return nil, err
+	}
+
+	// OPTIMUSDB_IPFS_PROVIDE=false: do not announce every new block to the DHT (kubo's StrategicProviding).
+	// Replicas fetch store entries over bitswap from the peers they are connected to, which ask their connected
+	// peers directly, so provider records are not needed when the agents are connected to each other; the
+	// announcements otherwise run DHT queries for each written block. Unset: kubo's default (announce).
+	if v := strings.ToLower(strings.TrimSpace(os.Getenv("OPTIMUSDB_IPFS_PROVIDE"))); v == "false" || v == "0" || v == "off" {
+		if rc, cerr := repo.Config(); cerr == nil && !rc.Experimental.StrategicProviding {
+			rc.Experimental.StrategicProviding = true
+			if serr := repo.SetConfig(rc); serr != nil {
+				logger.Warn("[WARN] could not turn off DHT providing: %v", serr)
+			} else {
+				logger.Info("[INFO] IPFS: DHT providing off")
+			}
+		}
 	}
 
 	// Construct the node
