@@ -50,7 +50,23 @@ func init() {
 	if config.FlagLogFilename != nil && *config.FlagLogFilename != "" {
 		logFilename = *config.FlagLogFilename
 	}
-	GlobalLogger = NewLogger(INFO, logFilename, lokiURL)
+	GlobalLogger = NewLogger(levelFromEnv(INFO), logFilename, lokiURL)
+}
+
+// levelFromEnv reads OPTIMUSDB_LOG_LEVEL (DEBUG, INFO, WARN, ERROR); anything else keeps the default.
+// Every log line is also written to the SQLite log table, so WARN reduces per-request overhead.
+func levelFromEnv(def LogLevel) LogLevel {
+	switch strings.ToUpper(strings.TrimSpace(os.Getenv("OPTIMUSDB_LOG_LEVEL"))) {
+	case "DEBUG":
+		return DEBUG
+	case "INFO":
+		return INFO
+	case "WARN", "WARNING":
+		return WARN
+	case "ERROR":
+		return ERROR
+	}
+	return def
 }
 
 // Logger is a custom logger with different log levels

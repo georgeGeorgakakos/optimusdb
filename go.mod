@@ -237,3 +237,6 @@ require (
 	lukechampine.com/blake3 v1.1.7 // indirect
 	nhooyr.io/websocket v1.8.7 // indirect
 )
+
+// Patched go-orbit-db: PUTALL index bug fixed and incremental document index (see third_party/README.md).
+replace berty.tech/go-orbit-db => ./third_party/go-orbit-db

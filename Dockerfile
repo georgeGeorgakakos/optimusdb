@@ -15,8 +15,9 @@ RUN apt update && apt install -y \
     curl \
     unzip
 
-# Copy go.mod and go.sum first
+# Copy go.mod and go.sum first (and the patched go-orbit-db that go.mod replaces)
 COPY go.mod go.sum ./
+COPY third_party ./third_party
 
 # Clean go.mod from problematic dependencies (keep HTTP client working)
 RUN sed -i '/go-llama/d' go.mod && \

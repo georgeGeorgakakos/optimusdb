@@ -1102,74 +1102,37 @@ func crudPutDocStoreRev(optimusdb *KnowledgeBaseDB, logChan chan Log,
 	}
 
 	// =========================================================================
-	// SYNCHRONOUS INSERT LOOP (Proven Stable)
+	// BATCHED INSERT: one oplog entry (PutAll) per batch of documents instead of
+	// one entry per document (see app/batch_put.go and third_party/go-orbit-db).
 	// =========================================================================
-	successCount := 0
-	errorCount := 0
-	var lastError error
+	logger.Info("[INFO] CRUDPUT: Starting batched insertion of %d documents...", len(docsToInsert))
 
-	logger.Info("[INFO] CRUDPUT: Starting document insertion...")
+	storedDocs, lastError := PutDocumentsBatched(ctx, dbDocStore, docsToInsert, storeName)
+	successCount := len(storedDocs)
+	errorCount := len(docsToInsert) - successCount
 
-	for i, doc := range docsToInsert {
-		docMap, ok := doc.(map[string]interface{})
-		if !ok {
-			logger.Error("[ERROR] CRUDPUT: Document %d is not a map", i)
-			errorCount++
-			continue
-		}
-
-		docID := fmt.Sprintf("%v", docMap["_id"])
-
-		// ✅ Per-document panic recovery (prevents crashes)
-		insertSuccess := false
-		insertErr := error(nil)
-
-		func() {
-			defer func() {
-				if r := recover(); r != nil {
-					logger.Error("[PANIC RECOVERED] CRUDPUT: Insert panic for %s: %v", docID, r)
-					insertErr = fmt.Errorf("panic during insert: %v", r)
+	// ── Semantic index (fire-and-forget, never blocks the write) ──────────
+	if optimusdb.SemanticIdx != nil {
+		for _, doc := range storedDocs {
+			docMap, ok := doc.(map[string]interface{})
+			if !ok {
+				continue
+			}
+			docID := fmt.Sprintf("%v", docMap["_id"])
+			fields := docFieldsToStringMap(docMap)
+			go func(sn, id string, f map[string]string, sidx interface{}) {
+				type indexer interface {
+					IndexDocument(store, docID string, fields map[string]string) error
 				}
-			}()
-
-			_, err := dbDocStore.Put(ctx, doc)
-			if err != nil {
-				insertErr = err
-				return
-			}
-
-			insertSuccess = true
-		}()
-
-		// Track success/failure
-		if insertSuccess {
-			successCount++
-			if (successCount)%10 == 0 || successCount == len(docsToInsert) {
-				logger.Info("[INFO] CRUDPUT: Progress %d/%d documents inserted", successCount, len(docsToInsert))
-			}
-
-			// ── Semantic index (fire-and-forget, never blocks the write) ──────────
-			if optimusdb.SemanticIdx != nil {
-				fields := docFieldsToStringMap(docMap)
-				go func(sn, id string, f map[string]string, sidx interface{}) {
-					type indexer interface {
-						IndexDocument(store, docID string, fields map[string]string) error
+				if idx, ok := sidx.(indexer); ok {
+					if err := idx.IndexDocument(sn, id, f); err != nil {
+						logger.Warn("[SEMANTIC] index failed %s/%s: %v", sn, id, err)
 					}
-					if idx, ok := sidx.(indexer); ok {
-						if err := idx.IndexDocument(sn, id, f); err != nil {
-							logger.Warn("[SEMANTIC] index failed %s/%s: %v", sn, id, err)
-						}
-					}
-				}(storeName, docID, fields, optimusdb.SemanticIdx)
-			}
-			// ─────────────────────────────────────────────────────────────────────
-
-		} else {
-			errorCount++
-			lastError = insertErr
-			logger.Error("[ERROR] CRUDPUT: Failed to insert document %s: %v", docID, insertErr)
+				}
+			}(storeName, docID, fields, optimusdb.SemanticIdx)
 		}
 	}
+	// ─────────────────────────────────────────────────────────────────────
 
 	logger.Info("[INFO] CRUDPUT: Insert phase complete - Success: %d, Failed: %d", successCount, errorCount)
 
@@ -2034,29 +1997,37 @@ func awaitReplicateForDocStore(store iface.DocumentStore, storeName string,
 		}
 
 		entries := re.Entries
-		logger.Info("[REPLICATION] %s: Replicated %d documents from peer", storeName, len(entries))
+		logger.Info("[REPLICATION] %s: Replicated %d log entries from peer", storeName, len(entries))
 
-		// Optional: Process replicated documents
+		// Optional: Process replicated documents. An entry is either a single-document
+		// operation (PUT/DEL: "key" + "value") or a batch (PUTALL: "docs"), written by
+		// PutDocumentsBatched. One log line per entry, not per document: every log line is
+		// also persisted to SQLite, so per-document lines slowed replication down.
 		for i, entry := range entries {
-			opStr := entry.GetPayload()
-			var op opDoc
-			err := json.Unmarshal(opStr, &op)
-			if err != nil {
+			var op struct {
+				Op    string  `json:"op"`
+				Key   string  `json:"key"`
+				Value []byte  `json:"value"`
+				Docs  []opDoc `json:"docs"`
+			}
+			if err := json.Unmarshal(entry.GetPayload(), &op); err != nil {
 				logger.Warn("[REPLICATION] %s: Failed to parse entry %d: %v", storeName, i, err)
 				continue
 			}
-
-			// Parse document
-			var doc map[string]interface{}
-			err = json.Unmarshal(op.Value, &doc)
-			if err != nil {
-				logger.Warn("[REPLICATION] %s: Failed to parse document %d: %v", storeName, i, err)
-				continue
-			}
-
-			// Log replicated document ID
-			if docID, ok := doc["_id"]; ok {
-				logger.Info("[REPLICATION] %s: Document %v replicated successfully", storeName, docID)
+			switch op.Op {
+			case "PUTALL":
+				logger.Info("[REPLICATION] %s: batch of %d documents replicated successfully", storeName, len(op.Docs))
+			case "DEL":
+				logger.Info("[REPLICATION] %s: deletion of %s replicated", storeName, op.Key)
+			default:
+				var doc map[string]interface{}
+				if err := json.Unmarshal(op.Value, &doc); err != nil {
+					logger.Warn("[REPLICATION] %s: Failed to parse document %d: %v", storeName, i, err)
+					continue
+				}
+				if docID, ok := doc["_id"]; ok {
+					logger.Info("[REPLICATION] %s: Document %v replicated successfully", storeName, docID)
+				}
 			}
 		}
 	}
