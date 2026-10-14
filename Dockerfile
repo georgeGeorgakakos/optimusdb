@@ -67,7 +67,8 @@ RUN go mod tidy || true
 
 # Build OptimusDB with HTTP client support
 # RUN CGO_ENABLED=1 GOOS=linux GOARCH=amd64 go build -o optimusdb main.go
-RUN CGO_ENABLED=1 GOOS=linux GOARCH=amd64 go build -tags allow_load_extension -o optimusdb main.go
+#RUN CGO_ENABLED=1 GOOS=linux GOARCH=amd64 go build -tags allow_load_extension -o optimusdb main.go
+RUN CGO_ENABLED=1 GOOS=linux GOARCH=amd64 go build -tags allow_load_extension -o optimusdb .
 
 # ==============================================================================
 # Stage 2: Runtime
