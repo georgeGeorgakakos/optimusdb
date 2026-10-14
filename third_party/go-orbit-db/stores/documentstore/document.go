@@ -38,6 +38,24 @@ func (o *orbitDBDocumentStore) Get(ctx context.Context, key string, opts *iface.
 		return nil, fmt.Errorf("unable to cast index to documentIndex")
 	}
 
+	// Patched for OptimusDB: an exact-key lookup reads the index entry directly instead of comparing the
+	// key with every key in the store. Same result as the loop below for this case.
+	if !opts.CaseInsensitive && !opts.PartialMatches && !hasMultipleTerms {
+		value := docIndex.Get(key)
+		if value == nil {
+			return nil, nil
+		}
+		raw, ok := value.([]byte)
+		if !ok {
+			return nil, fmt.Errorf("invalid type for key %s", key)
+		}
+		out := o.docOpts.ItemFactory()
+		if err := o.docOpts.Unmarshal(raw, &out); err != nil {
+			return nil, fmt.Errorf("unable to unmarshal value for key %s: %w", key, err)
+		}
+		return []interface{}{out}, nil
+	}
+
 	documents := []interface{}(nil)
 
 	for _, indexKey := range docIndex.Keys() {

@@ -104,6 +104,7 @@ type QueryOptions struct {
 	IncludeLocal   bool             `json:"include_local"`    // default: true
 	AnnotateSource bool             `json:"annotate_source"`  // default: true
 	DSType         string           `json:"dstype,omitempty"` // FIX: target datastore for query routing
+	ForceRemote    bool             `json:"force_remote"`     // LOCAL_THEN_REMOTE_MERGE: ask peers even when local rows suffice
 }
 
 type Request struct {
@@ -253,6 +254,7 @@ func Service(knowledgeBaseDB *KnowledgeBaseDB,
 				if req.Options.MaxPeers > 0 {
 					opt.MaxPeers = req.Options.MaxPeers
 				}
+				opt.ForceRemote = req.Options.ForceRemote
 				opt.IncludeLocal = req.Options.IncludeLocal || req.Options.IncludeLocal == true
 				opt.AnnotateSource = !(req.Options.AnnotateSource == false)
 			}
@@ -294,9 +296,10 @@ func Service(knowledgeBaseDB *KnowledgeBaseDB,
 				break
 			}
 
-			// Optional: persist remote rows you just learned about
+			// Persist rows learned from peers that are not stored locally yet. Rows read locally are not
+			// written back: a read must not create log entries (query_fastpath.go).
 			if len(out) > 0 {
-				storeResults(knowledgeBaseDB, logChan, req.DSType, out)
+				persistRemoteRows(knowledgeBaseDB, req.DSType, out)
 			}
 
 			res = out
@@ -2144,6 +2147,15 @@ func queryLocalDB(knowledgeBaseDB *KnowledgeBaseDB, criteria []map[string]interf
 		return nil, fmt.Errorf("store resolution failed for dstype=%s: %w", targetDstype, err)
 	}
 
+	// Lookup by id: read the one index entry instead of scanning the whole store (query_fastpath.go).
+	if id, ok := idOnlyCriteria(criteria); ok {
+		docs, err := getDocsByID(ctx, dbDocStore, id)
+		if err != nil {
+			return nil, fmt.Errorf("query execution failed: %w", err)
+		}
+		return toDocMaps(docs), nil
+	}
+
 	results, err := dbDocStore.Query(ctx, func(doc interface{}) (bool, error) {
 		record, ok := doc.(map[string]interface{})
 		if !ok {
@@ -3054,14 +3066,53 @@ func annotate(items []map[string]interface{}, source string, peerID string, stra
 	}
 }
 
-// localThenRemoteMerge executes local first, then remote, and merges within a time budget.
-func localThenRemoteMerge(kb *KnowledgeBaseDB, criteria []map[string]interface{}, opt QueryOptions) ([]map[string]interface{}, error) {
+// queryRemote asks the peers through the query engine within the time budget.
+func queryRemote(kb *KnowledgeBaseDB, criteria []map[string]interface{}, opt QueryOptions, strategy QueryStrategy) ([]map[string]interface{}, error) {
 	if opt.TimeBudgetMs <= 0 {
 		opt.TimeBudgetMs = 1200
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(opt.TimeBudgetMs)*time.Millisecond)
 	defer cancel()
+	// respect cache TTL if provided via StaleOkTTLms by configuring your engine TTL
+	if kb.QueryEngine == nil {
+		kb.QueryEngine = queryengine.NewOptimizedEngine(8, 5*time.Second, 10*time.Minute)
+	}
+	remote, err := kb.QueryEngine.Query(ctx, kb.Node.PeerHost, kb.Node.Identity, criteria)
+	if err == nil && opt.AnnotateSource {
+		annotate(remote, "peer", "", strategy)
+	}
+	return remote, err
+}
 
+// localThenRemoteMerge answers from the local replica first and asks the peers only when the local rows do
+// not suffice: no local rows, fewer than min_rows, or force_remote set. This is the order the strategy's
+// name states and the one the peer-side handler (query_handler.go) already applies. PARALLEL_MERGE keeps
+// asking local and peers at the same time.
+func localThenRemoteMerge(kb *KnowledgeBaseDB, criteria []map[string]interface{}, opt QueryOptions) ([]map[string]interface{}, error) {
+	var local []map[string]interface{}
+	var lerr error
+	if opt.IncludeLocal {
+		local, lerr = queryLocalDB(kb, criteria, opt.DSType)
+		if lerr == nil && opt.AnnotateSource {
+			annotate(local, "local", "", StrategyLocalThenRemoteMerge)
+		}
+		if lerr == nil && !opt.ForceRemote && len(local) > 0 && (opt.MinRows <= 0 || len(local) >= opt.MinRows) {
+			return local, nil
+		}
+	}
+
+	remote, rerr := queryRemote(kb, criteria, opt, StrategyLocalThenRemoteMerge)
+	if lerr != nil && rerr != nil {
+		return nil, fmt.Errorf("local and remote failed: local=%v remote=%v", lerr, rerr)
+	}
+
+	merged := append([]map[string]interface{}{}, local...)
+	merged = append(merged, remote...)
+	return dedupResults(merged), nil
+}
+
+// parallelMerge fires local and remote immediately and returns merged results by budget.
+func parallelMerge(kb *KnowledgeBaseDB, criteria []map[string]interface{}, opt QueryOptions) ([]map[string]interface{}, error) {
 	var local []map[string]interface{}
 	var remote []map[string]interface{}
 	var lerr, rerr error
@@ -3073,7 +3124,7 @@ func localThenRemoteMerge(kb *KnowledgeBaseDB, criteria []map[string]interface{}
 			defer wg.Done()
 			local, lerr = queryLocalDB(kb, criteria, opt.DSType)
 			if lerr == nil && opt.AnnotateSource {
-				annotate(local, "local", "", StrategyLocalThenRemoteMerge)
+				annotate(local, "local", "", StrategyParallelMerge)
 			}
 		}()
 	}
@@ -3081,14 +3132,7 @@ func localThenRemoteMerge(kb *KnowledgeBaseDB, criteria []map[string]interface{}
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		// respect cache TTL if provided via StaleOkTTLms by configuring your engine TTL
-		if kb.QueryEngine == nil {
-			kb.QueryEngine = queryengine.NewOptimizedEngine(8, 5*time.Second, 10*time.Minute)
-		}
-		remote, rerr = kb.QueryEngine.Query(ctx, kb.Node.PeerHost, kb.Node.Identity, criteria)
-		if rerr == nil && opt.AnnotateSource {
-			annotate(remote, "peer", "", StrategyLocalThenRemoteMerge)
-		}
+		remote, rerr = queryRemote(kb, criteria, opt, StrategyParallelMerge)
 	}()
 
 	wg.Wait()
@@ -3099,20 +3143,7 @@ func localThenRemoteMerge(kb *KnowledgeBaseDB, criteria []map[string]interface{}
 
 	merged := append([]map[string]interface{}{}, local...)
 	merged = append(merged, remote...)
-
-	merged = dedupResults(merged)
-
-	if opt.MinRows > 0 && len(merged) < opt.MinRows {
-		// OPTIONAL: you can perform a second-chance fanout here if needed
-	}
-
-	return merged, nil
-}
-
-// parallelMerge fires local and remote immediately and returns merged results by budget.
-func parallelMerge(kb *KnowledgeBaseDB, criteria []map[string]interface{}, opt QueryOptions) ([]map[string]interface{}, error) {
-	// Same as localThenRemoteMerge (kept for clarity—here they are functionally equivalent)
-	return localThenRemoteMerge(kb, criteria, opt)
+	return dedupResults(merged), nil
 }
 
 // quorumMerge waits for N peer responses (or min rows) then merges with local.
@@ -3387,16 +3418,21 @@ func crudUpdateDocStoreRev(optimusdb *KnowledgeBaseDB, dstype string, criteria [
 
 	logger.Info("[INFO] CRUDUPDATE: Updating in %s with criteria: %+v", storeName, filterCriteria)
 
-	// Query for documents matching criteria
-	matchedDocs, err := dbDocStore.Query(ctx, func(doc interface{}) (bool, error) {
-		record, ok := doc.(map[string]interface{})
-		if !ok {
-			return false, nil
-		}
+	// Query for documents matching criteria; an update by id reads the one index entry (query_fastpath.go)
+	var matchedDocs []interface{}
+	if id, ok := idOnlyFilter(filterCriteria); ok {
+		matchedDocs, err = getDocsByID(ctx, dbDocStore, id)
+	} else {
+		matchedDocs, err = dbDocStore.Query(ctx, func(doc interface{}) (bool, error) {
+			record, ok := doc.(map[string]interface{})
+			if !ok {
+				return false, nil
+			}
 
-		// Use enhanced matching with nested path support and operators
-		return matchesCriteriaEnhanced(record, filterCriteria), nil
-	})
+			// Use enhanced matching with nested path support and operators
+			return matchesCriteriaEnhanced(record, filterCriteria), nil
+		})
+	}
 
 	if err != nil {
 		return 0, fmt.Errorf("query for update failed: %w", err)
@@ -3476,16 +3512,7 @@ func crudUpdateDocStoreRev(optimusdb *KnowledgeBaseDB, dstype string, criteria [
 			metadataStore := *optimusdb.KBMetadata
 			metadataID := fmt.Sprintf("meta_%s", docIDStr)
 
-			metadataDocs, _ := metadataStore.Query(ctx, func(doc interface{}) (bool, error) {
-				metaRecord, ok := doc.(map[string]interface{})
-				if !ok {
-					return false, nil
-				}
-				if metaID, ok := metaRecord["_id"].(string); ok {
-					return metaID == metadataID, nil
-				}
-				return false, nil
-			})
+			metadataDocs, _ := getDocsByID(ctx, metadataStore, metadataID)
 
 			if len(metadataDocs) > 0 {
 				if metaDoc, ok := metadataDocs[0].(map[string]interface{}); ok {

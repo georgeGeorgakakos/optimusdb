@@ -1,7 +1,7 @@
 # third_party/go-orbit-db
 
-A copy of `berty.tech/go-orbit-db` **v1.21.0** (tests removed) with one file changed:
-`stores/documentstore/index.go`. `go.mod` points to it with
+A copy of `berty.tech/go-orbit-db` **v1.21.0** (tests removed) with two files changed:
+`stores/documentstore/index.go` and `stores/documentstore/document.go`. `go.mod` points to it with
 `replace berty.tech/go-orbit-db => ./third_party/go-orbit-db`.
 
 ## Why
@@ -23,3 +23,10 @@ Batching with `PutAll` was not possible because of a bug in the upstream index.
 
 `app/batch_put.go` uses `PutAll` with batches of up to 500 documents or about 512 KiB per oplog entry.
 `OPTIMUSDB_BATCH_PUT=false` restores the old one-document-per-entry behaviour, for comparison.
+
+## Change in `stores/documentstore/document.go`
+
+**Exact-key `Get`.** Upstream `Get` compared the key with every key in the store. For an exact lookup (no
+`CaseInsensitive`, no `PartialMatches`, no multi-term key) it now reads the index entry for that key
+directly. Same result, constant cost. `app/query_fastpath.go` uses it for queries and updates whose only
+condition is `{"_id": "<id>"}`.
