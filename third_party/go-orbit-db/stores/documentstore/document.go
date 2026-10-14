@@ -49,8 +49,8 @@ func (o *orbitDBDocumentStore) Get(ctx context.Context, key string, opts *iface.
 		if !ok {
 			return nil, fmt.Errorf("invalid type for key %s", key)
 		}
-		out := o.docOpts.ItemFactory()
-		if err := o.docOpts.Unmarshal(raw, &out); err != nil {
+		out, err := o.decode(docIndex, key, raw)
+		if err != nil {
 			return nil, fmt.Errorf("unable to unmarshal value for key %s: %w", key, err)
 		}
 		return []interface{}{out}, nil
@@ -196,6 +196,22 @@ func (o *orbitDBDocumentStore) PutAll(ctx context.Context, values []interface{})
 	return op, nil
 }
 
+// decode returns the document stored under key as raw, from the decoded-document cache when possible.
+// Patched for OptimusDB (see index.go, change 5).
+func (o *orbitDBDocumentStore) decode(docIndex *documentIndex, key string, raw []byte) (interface{}, error) {
+	if doc, ok := docIndex.cachedDoc(key, raw); ok {
+		return doc, nil
+	}
+	value := o.docOpts.ItemFactory()
+	if err := o.docOpts.Unmarshal(raw, &value); err != nil {
+		return nil, err
+	}
+	if m, ok := value.(map[string]interface{}); ok {
+		docIndex.cacheDoc(key, raw, m)
+	}
+	return value, nil
+}
+
 // Query Finds documents using a filter function
 func (o *orbitDBDocumentStore) Query(ctx context.Context, filter func(doc interface{}) (bool, error)) ([]interface{}, error) {
 	docIndex, ok := o.Index().(*documentIndex)
@@ -203,15 +219,19 @@ func (o *orbitDBDocumentStore) Query(ctx context.Context, filter func(doc interf
 		return nil, fmt.Errorf("unable to cast index to documentIndex")
 	}
 
+	return o.filterKeys(docIndex, docIndex.Keys(), filter)
+}
+
+func (o *orbitDBDocumentStore) filterKeys(docIndex *documentIndex, keys []string, filter func(doc interface{}) (bool, error)) ([]interface{}, error) {
 	documents := []interface{}(nil)
-	for _, indexKey := range docIndex.Keys() {
+	for _, indexKey := range keys {
 		doc := docIndex.Get(indexKey)
 		if doc == nil {
 			continue
 		}
 
-		value := o.docOpts.ItemFactory()
-		if err := o.docOpts.Unmarshal(doc.([]byte), &value); err != nil {
+		value, err := o.decode(docIndex, indexKey, doc.([]byte))
+		if err != nil {
 			return nil, fmt.Errorf("unable to unmarshal document: %w", err)
 		}
 
@@ -223,6 +243,36 @@ func (o *orbitDBDocumentStore) Query(ctx context.Context, filter func(doc interf
 	}
 
 	return documents, nil
+}
+
+// QueryIndexed is Query restricted to the documents whose top-level fields equal the given string values,
+// read through the field indexes (index.go, change 4). The filter is still applied to every candidate, so
+// the result is the same as Query with that filter whenever the filter implies the equalities. indexed is
+// false, and nothing is read, when none of the fields is indexed; the caller then uses Query.
+// Patched for OptimusDB.
+func (o *orbitDBDocumentStore) QueryIndexed(ctx context.Context, equal map[string]string, filter func(doc interface{}) (bool, error)) ([]interface{}, bool, error) {
+	docIndex, ok := o.Index().(*documentIndex)
+	if !ok {
+		return nil, false, fmt.Errorf("unable to cast index to documentIndex")
+	}
+
+	var best []string
+	found := false
+	for f, v := range equal {
+		keys, ok := docIndex.keysByField(f, v)
+		if !ok {
+			continue
+		}
+		if !found || len(keys) < len(best) {
+			best, found = keys, true
+		}
+	}
+	if !found {
+		return nil, false, nil
+	}
+
+	docs, err := o.filterKeys(docIndex, best, filter)
+	return docs, true, err
 }
 
 func (o *orbitDBDocumentStore) Type() string {

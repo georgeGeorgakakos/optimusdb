@@ -118,6 +118,10 @@ type Request struct {
 
 	// NEW: //25102025
 	Options *QueryOptions `json:"options,omitempty"`
+
+	// Reply receives this request's response. Each HTTP request has its own channel, so requests are processed
+	// concurrently and every caller gets its own answer. Nil (e.g. the interactive shell) falls back to resChan.
+	Reply chan interface{} `json:"-"`
 }
 
 // SQLQuery represents a parsed SQL query
@@ -192,8 +196,48 @@ func Service(knowledgeBaseDB *KnowledgeBaseDB,
 
 	//--------------------------------------------------------------------------
 	// handle API requests
+	//
+	// Requests are handled concurrently, up to SERVICE_CONCURRENCY at a time (default 32). Previously one loop
+	// handled one request at a time, so every API call (reads included) waited for all calls queued before it;
+	// at a few dozen requests per second the queue grew until clients timed out.
+	sem := make(chan struct{}, serviceConcurrency())
 	for {
 		req := <-reqChan
+		sem <- struct{}{}
+		go func(req Request) {
+			defer func() { <-sem }()
+			defer func() {
+				if r := recover(); r != nil {
+					logger.Error("[ERROR] service request %s panicked: %v", req.Method.Cmd, r)
+					deliver(req, resChan, map[string]interface{}{"error": fmt.Sprintf("internal error: %v", r)})
+				}
+			}()
+			deliver(req, resChan, handleRequest(knowledgeBaseDB, req, hostCID, logChan, rdbms))
+		}(req)
+	}
+}
+
+// deliver sends a response to the request's own reply channel, or to the shared channel (interactive shell).
+func deliver(req Request, resChan chan interface{}, res interface{}) {
+	if req.Reply != nil {
+		req.Reply <- res
+		return
+	}
+	resChan <- res
+}
+
+// serviceConcurrency: maximum number of API requests handled at the same time (SERVICE_CONCURRENCY, default 32).
+func serviceConcurrency() int {
+	if v, err := strconv.Atoi(strings.TrimSpace(os.Getenv("SERVICE_CONCURRENCY"))); err == nil && v > 0 {
+		return v
+	}
+	return 32
+}
+
+// handleRequest executes one API request and returns its response.
+func handleRequest(knowledgeBaseDB *KnowledgeBaseDB, req Request, hostCID host.Host, logChan chan Log,
+	rdbms *KnowledgeBaseSQLite) interface{} {
+	{
 		logChan <- Log{Info, "Received service request"}
 
 		var res interface{}
@@ -447,8 +491,7 @@ func Service(knowledgeBaseDB *KnowledgeBaseDB,
 
 		}
 
-		// send response
-		resChan <- res
+		return res
 	}
 }
 
@@ -2156,7 +2199,7 @@ func queryLocalDB(knowledgeBaseDB *KnowledgeBaseDB, criteria []map[string]interf
 		return toDocMaps(docs), nil
 	}
 
-	results, err := dbDocStore.Query(ctx, func(doc interface{}) (bool, error) {
+	filter := func(doc interface{}) (bool, error) {
 		record, ok := doc.(map[string]interface{})
 		if !ok {
 			return false, nil
@@ -2198,7 +2241,20 @@ func queryLocalDB(knowledgeBaseDB *KnowledgeBaseDB, criteria []map[string]interf
 		}
 
 		return false, nil // No criteria matched
-	})
+	}
+
+	// Equality conditions on indexed fields read only the matching documents (field indexes in the patched
+	// go-orbit-db document store); the filter is still applied to each of them, so the result is the same.
+	var results []interface{}
+	indexed := false
+	if eq := indexableEqualities(criteria); len(eq) > 0 {
+		if iq, ok := dbDocStore.(indexedQuerier); ok {
+			results, indexed, err = iq.QueryIndexed(ctx, eq, filter)
+		}
+	}
+	if !indexed && err == nil {
+		results, err = dbDocStore.Query(ctx, filter)
+	}
 
 	if err != nil {
 		return nil, fmt.Errorf("query execution failed: %w", err)
@@ -2647,6 +2703,7 @@ func SQLDMLWithPeerFallback(req Request, logChan chan Log, db *KnowledgeBaseDB) 
 
 	// --- Handle remote peer queries if no local results ---
 	records, ok := result.([]map[string]interface{})
+	peerMerged := false
 	if ok && len(records) == 0 {
 		logChan <- Log{Type: Info, Data: "[INFO] SQL DML: No local results — querying remote SQLite peers"}
 		peerRecords, err := queryRemoteSQLitePeers(req, db)
@@ -2655,15 +2712,23 @@ func SQLDMLWithPeerFallback(req Request, logChan chan Log, db *KnowledgeBaseDB) 
 		} else if len(peerRecords) > 0 {
 			records = append(records, peerRecords...)
 			logChan <- Log{Type: Info, Data: fmt.Sprintf("[INFO] SQL DML: Retrieved %d records from remote peers", len(peerRecords))}
+			peerMerged = true
 		}
 	}
 
-	// Deduplicate results
-	deduped := DedupSQLResults(records)
-	logChan <- Log{Type: Info, Data: fmt.Sprintf("[INFO] SQL DML: Retrieved %d → %d records after deduplication", len(records), len(deduped))}
+	// Deduplicate results. Only rows merged from peers can repeat local rows; a local result is returned as
+	// SQLite produced it (deduplicating it would also drop rows a query legitimately returns twice).
+	deduped := records
+	if peerMerged {
+		deduped = DedupSQLResults(records)
+		logChan <- Log{Type: Info, Data: fmt.Sprintf("[INFO] SQL DML: Retrieved %d → %d records after deduplication", len(records), len(deduped))}
+	}
 
 	// Return appropriate response based on result type
 	if _, ok := result.([]map[string]interface{}); ok {
+		if deduped == nil {
+			deduped = []map[string]interface{}{} // "records": [] rather than null for an empty result
+		}
 		return map[string]interface{}{
 			"records": deduped,
 		}, nil
@@ -3442,8 +3507,9 @@ func crudUpdateDocStoreRev(optimusdb *KnowledgeBaseDB, dstype string, criteria [
 		return 0, nil
 	}
 
-	// Update each matched document using delete-then-insert pattern
-	updatedCount := 0
+	// Build the updated documents
+	var updatedDocs []map[string]interface{}
+	var updatedIDs []string
 	for _, doc := range matchedDocs {
 		record, ok := doc.(map[string]interface{})
 		if !ok {
@@ -3486,20 +3552,45 @@ func crudUpdateDocStoreRev(optimusdb *KnowledgeBaseDB, dstype string, criteria [
 		// Add update timestamp
 		updatedDoc["_updated_at"] = time.Now().UTC().Format(time.RFC3339)
 
-		// STEP 1: Delete old document
-		_, err := dbDocStore.Delete(ctx, docIDStr)
-		if err != nil {
-			return updatedCount, fmt.Errorf("failed to delete old document %s: %w", docIDStr, err)
-		}
+		updatedDocs = append(updatedDocs, updatedDoc)
+		updatedIDs = append(updatedIDs, docIDStr)
+	}
 
-		// STEP 2: Insert updated document with same _id
-		_, err = dbDocStore.Put(ctx, updatedDoc)
-		if err != nil {
-			return updatedCount, fmt.Errorf("failed to insert updated document %s: %w", docIDStr, err)
-		}
+	// One Put per document with the same _id replaces it (last writer wins in the document index); the former
+	// delete-then-insert wrote two log entries per update and briefly left the document missing for readers.
+	// Writes go through the store's group commit (group_commit.go), which combines concurrent writes.
+	toWrite := make([]interface{}, len(updatedDocs))
+	for i, d := range updatedDocs {
+		toWrite[i] = d
+	}
+	errs := PutManyCoalesced(ctx, dbDocStore, toWrite, storeName)
 
+	updatedCount := 0
+	var firstErr error
+	for i, e := range errs {
+		if e != nil {
+			if firstErr == nil {
+				firstErr = fmt.Errorf("failed to update document %s: %w", updatedIDs[i], e)
+			}
+			continue
+		}
 		updatedCount++
+		// Lineage and metadata bookkeeping run after the write, off the request path (like the semantic index):
+		// the update is acknowledged once the document itself is stored.
+		enqueueLineage(optimusdb, updatedDocs[i], storeName, updatedIDs[i])
+	}
+	if firstErr != nil {
+		return updatedCount, firstErr
+	}
 
+	logger.Info("[INFO] CRUDUPDATE: Updated %d documents in %s", updatedCount, storeName)
+	return updatedCount, nil
+}
+
+// updateLineageAndMetadata refreshes lineage and the metadata document of an updated document.
+func updateLineageAndMetadata(optimusdb *KnowledgeBaseDB, updatedDoc map[string]interface{}, storeName, docIDStr string) {
+	ctx := context.Background()
+	{
 		// Lineage update for modified document
 		if optimusdb.Interceptor != nil {
 			if err := optimusdb.Interceptor.OnDocumentUpdate(updatedDoc, storeName); err != nil {
@@ -3521,15 +3612,11 @@ func crudUpdateDocStoreRev(optimusdb *KnowledgeBaseDB, dstype string, criteria [
 						metaDoc["name"] = name
 					}
 
-					metadataStore.Delete(ctx, metadataID)
-					metadataStore.Put(ctx, metaDoc)
+					metadataStore.Put(ctx, metaDoc) // same _id: replaces the metadata document
 				}
 			}
 		}
 	}
-
-	logger.Info("[INFO] CRUDUPDATE: Updated %d documents in %s", updatedCount, storeName)
-	return updatedCount, nil
 }
 
 // =============================================================================

@@ -846,7 +846,8 @@ func (b *BaseStore) AddOperation(ctx context.Context, op operation.Operation, on
 		return nil, fmt.Errorf("unable to add data to cache: %w", err)
 	}
 
-	if err := b.updateIndex(ctx); err != nil {
+	// Patched for OptimusDB: pass the new entry so the index applies it without walking the log.
+	if err := b.Index().UpdateIndex(oplog, []ipfslog.Entry{e}); err != nil {
 		return nil, fmt.Errorf("unable to update index: %w", err)
 	}
 

@@ -13,6 +13,7 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -78,6 +79,25 @@ type Logger struct {
 	lokiBuffer chan *lokiLogEntry
 	wg         sync.WaitGroup
 	shutdown   chan struct{}
+
+	// Database persistence runs in the background: Log() only queues the row, a single writer goroutine stores
+	// the queued rows in batches (one transaction per batch when the database supports it). Previously every
+	// log line was inserted synchronously, in its own transaction, while holding the global log lock, so all
+	// request handlers waited on SQLite. When the queue is full, rows are dropped and counted, never blocking.
+	dbQueue   chan LogRow
+	dbOnce    sync.Once
+	dbDropped uint64
+}
+
+// LogRow is one log line queued for database persistence.
+type LogRow struct {
+	Level, Message, Source string
+	At                     time.Time
+}
+
+// LoggerBatchDB is implemented by databases that can store many log rows in one transaction.
+type LoggerBatchDB interface {
+	AddToOptimusLogBatch(rows []LogRow) error
 }
 
 // lokiLogEntry represents a queued log for async Loki sending
@@ -132,8 +152,65 @@ func NewLogger(level LogLevel, logFilePath, lokiURL string) *Logger {
 // SetDatabase sets the database logger for persistence
 func (l *Logger) SetDatabase(db LoggerDBInterface) {
 	logMutex.Lock()
-	defer logMutex.Unlock()
 	l.db = db
+	logMutex.Unlock()
+	l.dbOnce.Do(func() {
+		l.dbQueue = make(chan LogRow, 20000)
+		l.wg.Add(1)
+		go l.dbWriter()
+	})
+}
+
+// dbWriter stores queued log rows in batches of up to 500 rows or every 200 ms.
+func (l *Logger) dbWriter() {
+	defer l.wg.Done()
+	batch := make([]LogRow, 0, 500)
+	tick := time.NewTicker(200 * time.Millisecond)
+	defer tick.Stop()
+	flush := func() {
+		if len(batch) == 0 {
+			return
+		}
+		logMutex.RLock()
+		db := l.db
+		logMutex.RUnlock()
+		if db != nil {
+			if bdb, ok := db.(LoggerBatchDB); ok {
+				if err := bdb.AddToOptimusLogBatch(batch); err != nil {
+					log.Printf("[ERROR] Failed to persist %d log rows: %v\n", len(batch), err)
+				}
+			} else {
+				for _, r := range batch {
+					if err := db.AddToOptimusLog(r.Level, r.Message, r.Source); err != nil {
+						log.Printf("[ERROR] Failed to persist log to database: %v\n", err)
+						break
+					}
+				}
+			}
+		}
+		batch = batch[:0]
+	}
+	for {
+		select {
+		case r := <-l.dbQueue:
+			batch = append(batch, r)
+			if len(batch) >= 500 {
+				flush()
+			}
+		case <-tick.C:
+			flush()
+		case <-l.shutdown:
+			for {
+				select {
+				case r := <-l.dbQueue:
+					batch = append(batch, r)
+				default:
+					flush()
+					return
+				}
+			}
+		}
+	}
 }
 
 // SetLevel changes the current log level
@@ -200,16 +277,7 @@ func (l *Logger) Log(level LogLevel, message string, args ...interface{}) {
 	prefix := levelToString(level)
 	fullMessage := fmt.Sprintf("[%s] %s", prefix, formattedMessage)
 
-	// Acquire lock for all write operations
-	logMutex.Lock()
-	defer logMutex.Unlock()
-
-	// Double-check level after acquiring lock (in case it changed)
-	if level < l.level {
-		return
-	}
-
-	// Write to file
+	// Write to file (the standard logger serialises its own writes; no global lock is held here)
 	log.Print(fullMessage)
 
 	// Queue for Loki (non-blocking) — skip entirely if Loki is not configured
@@ -224,11 +292,14 @@ func (l *Logger) Log(level LogLevel, message string, args ...interface{}) {
 		}
 	}
 
-	// Persist to database (handle errors gracefully)
-	if l.db != nil {
-		if err := l.db.AddToOptimusLog(prefix, formattedMessage, source); err != nil {
-			// Log DB error to file only (avoid recursion)
-			log.Printf("[ERROR] Failed to persist log to database: %v (original: %s)\n", err, formattedMessage)
+	// Queue for database persistence (non-blocking; see dbWriter)
+	if l.dbQueue != nil {
+		select {
+		case l.dbQueue <- LogRow{Level: prefix, Message: formattedMessage, Source: source, At: time.Now()}:
+		default:
+			if n := atomic.AddUint64(&l.dbDropped, 1); n == 1 || n%10000 == 0 {
+				log.Printf("[WARN] log database queue full: %d rows not persisted so far\n", n)
+			}
 		}
 	}
 }

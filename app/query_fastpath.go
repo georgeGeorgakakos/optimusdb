@@ -9,6 +9,7 @@ package app
 
 import (
 	"context"
+	"strings"
 
 	"berty.tech/go-orbit-db/iface"
 	"optimusdb/logger"
@@ -29,6 +30,31 @@ func idOnlyCriteria(criteria []map[string]interface{}) (string, bool) {
 		return "", false
 	}
 	return idOnlyFilter(criteria[0])
+}
+
+// indexedQuerier is implemented by the patched go-orbit-db document store (third_party/go-orbit-db).
+type indexedQuerier interface {
+	QueryIndexed(ctx context.Context, equal map[string]string, filter func(doc interface{}) (bool, error)) ([]interface{}, bool, error)
+}
+
+// indexableEqualities returns the conditions "field equals a string" of a query with a single filter (no OR),
+// on top-level fields. Every matching document satisfies all of them, so any one can select the candidates.
+func indexableEqualities(criteria []map[string]interface{}) map[string]string {
+	if len(criteria) != 1 {
+		return nil
+	}
+	var eq map[string]string
+	for k, v := range criteria[0] {
+		s, ok := v.(string)
+		if !ok || k == "" || strings.Contains(k, ".") {
+			continue
+		}
+		if eq == nil {
+			eq = map[string]string{}
+		}
+		eq[k] = s
+	}
+	return eq
 }
 
 // getDocsByID reads the document stored under id (nil when there is none).

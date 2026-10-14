@@ -1195,6 +1195,35 @@ func (kb *KnowledgeBaseSQLite) InsertTOSCAMetadata(
 }
 
 // AddToOptimusLog inserts a log entry into the optimusLogger table
+// AddToOptimusLogBatch stores many log rows in one transaction (used by the logger's background writer).
+func (kb *LoggerSQLite) AddToOptimusLogBatch(rows []logger.LogRow) error {
+	if kb == nil || kb.TheLog == nil || len(rows) == 0 {
+		return nil
+	}
+	tx, err := kb.TheLog.Begin()
+	if err != nil {
+		return err
+	}
+	stmt, err := tx.Prepare(`INSERT INTO optimusLogger(timestamp, date, hour, level, message, source)
+                                VALUES (?, ?, ?, ?, ?, ?)`)
+	if err != nil {
+		tx.Rollback()
+		return err
+	}
+	defer stmt.Close()
+	for _, r := range rows {
+		at := r.At
+		if at.IsZero() {
+			at = time.Now()
+		}
+		if _, err := stmt.Exec(at.Format(time.RFC3339), at.Format("2006-01-02"), at.Format("15"), r.Level, r.Message, r.Source); err != nil {
+			tx.Rollback()
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
 func (kb *LoggerSQLite) AddToOptimusLog(level, message, source string) error {
 	now := time.Now()
 	timestamp := now.Format(time.RFC3339)

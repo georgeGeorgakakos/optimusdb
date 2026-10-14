@@ -1087,6 +1087,7 @@ func commandHandler(reqChan chan<- app.Request, resChan <-chan interface{}) http
 		UpdateData      []map[string]interface{} `json:"UpdateData"`
 		Graph_traversal []map[string]interface{} `json:"graph_Traversal"`
 		SQLDML          string                   `json:"sqldml"`
+		Options         *app.QueryOptions        `json:"options,omitempty"` // query strategy, budget, ... (was dropped)
 	}
 
 	logger.Debug("Command handler initialized")
@@ -1114,6 +1115,8 @@ func commandHandler(reqChan chan<- app.Request, resChan <-chan interface{}) http
 			UpdateData:      req.UpdateData,
 			SQLDML:          req.SQLDML,
 			Graph_traversal: req.Graph_traversal,
+			Options:         req.Options,
+			Reply:           make(chan interface{}, 1),
 		}
 
 		if serviceReq.Method == app.POST {
@@ -1125,8 +1128,8 @@ func commandHandler(reqChan chan<- app.Request, resChan <-chan interface{}) http
 			serviceReq.Args = append(serviceReq.Args, string(decoded))
 		}
 
-		reqChan <- serviceReq // send request to processing
-		res := <-resChan      // wait for response
+		reqChan <- serviceReq     // send request to processing
+		res := <-serviceReq.Reply // wait for this request's own response
 
 		_, err = json.Marshal(res)
 		if err != nil {

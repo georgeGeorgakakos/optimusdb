@@ -72,6 +72,21 @@ func PutDocumentsBatched(ctx context.Context, store iface.DocumentStore, docs []
 	if !batchPutEnabled() {
 		return putDocumentsOneByOne(ctx, store, docs, storeName)
 	}
+	// A few documents (an application insert, not a bulk load) go through the store's group commit, so
+	// concurrent inserts share oplog entries (group_commit.go).
+	if groupCommitEnabled() && len(docs) <= envInt("OPTIMUSDB_GROUP_COMMIT_MAX_DOCS", 64) {
+		var stored []interface{}
+		var lastErr error
+		for i, err := range PutManyCoalesced(ctx, store, docs, storeName) {
+			if err != nil {
+				logger.Error("[ERROR] BATCHPUT: failed to insert a document into %s: %v", storeName, err)
+				lastErr = err
+				continue
+			}
+			stored = append(stored, docs[i])
+		}
+		return stored, lastErr
+	}
 	maxDocs := envInt("OPTIMUSDB_BATCH_MAX_DOCS", 500)
 	maxBytes := envInt("OPTIMUSDB_BATCH_MAX_BYTES", 512*1024)
 
