@@ -304,6 +304,17 @@ func (o *orbitDBDocumentStore) QueryRaw(ctx context.Context, equal map[string]st
 	return o.rawMatches(docIndex, keys, filter)
 }
 
+// QueryRawExact returns the stored JSON of the documents whose top-level fields equal the given strings, from
+// the field indexes alone, without decoding any document. ok is false when a field is not indexed (the caller
+// then uses QueryRaw). Patched for OptimusDB.
+func (o *orbitDBDocumentStore) QueryRawExact(equal map[string]string) ([][]byte, bool) {
+	docIndex, ok := o.Index().(*documentIndex)
+	if !ok {
+		return nil, false
+	}
+	return docIndex.rawsByFields(equal)
+}
+
 // GetRaw returns the stored JSON of the document under key (nil if none). Patched for OptimusDB.
 func (o *orbitDBDocumentStore) GetRaw(key string) []byte {
 	docIndex, ok := o.Index().(*documentIndex)

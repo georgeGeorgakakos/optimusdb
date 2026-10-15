@@ -200,6 +200,49 @@ next:
 	return keys, true
 }
 
+// rawsByFields returns the stored JSON of the documents whose top-level fields have exactly the given string
+// values, read from the field indexes and the key index under one read lock (a consistent snapshot). ok is false
+// unless every field is indexed: only then is the result exact, so the caller need not decode the documents to
+// filter them (the index holds a document under a value only if that top-level field is that JSON string).
+func (i *documentIndex) rawsByFields(equal map[string]string) ([][]byte, bool) {
+	i.muIndex.RLock()
+	defer i.muIndex.RUnlock()
+
+	if i.fieldsOff || len(equal) == 0 {
+		return nil, false
+	}
+	sets := make([]map[string]struct{}, 0, len(equal))
+	for f, v := range equal {
+		vals, ok := i.byField[f]
+		if !ok {
+			return nil, false
+		}
+		sets = append(sets, vals[v])
+	}
+	smallest := 0
+	for j := range sets {
+		if len(sets[j]) < len(sets[smallest]) {
+			smallest = j
+		}
+	}
+	out := make([][]byte, 0, len(sets[smallest]))
+next:
+	for k := range sets[smallest] {
+		for j, set := range sets {
+			if j == smallest {
+				continue
+			}
+			if _, in := set[k]; !in {
+				continue next
+			}
+		}
+		if raw, ok := i.index[k]; ok {
+			out = append(out, raw)
+		}
+	}
+	return out, true
+}
+
 // hasKey reports whether a document is stored under key, without decoding it.
 func (i *documentIndex) hasKey(key string) bool {
 	i.muIndex.RLock()

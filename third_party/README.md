@@ -53,6 +53,16 @@ of all indexed equality conditions before reading any document. `HasKey` checks 
 documents selected by an equality condition on an indexed field and applies the full filter to each, so its
 result equals `Query` with that filter. `queryLocalDB` uses it for single-filter queries with such a condition.
 
+**Raw results.** `QueryRaw` and `GetRaw` return the stored JSON of the matching documents, so a query answer
+is written without decoding the documents and encoding them again. `QueryRawExact` goes one step further
+for criteria that are only string equalities on indexed top-level fields (e.g. `{"region": "eu-west",
+"status": "Running"}`): the field indexes then select exactly the matching documents (a document is indexed
+under a value only if that top-level field is that JSON string, the same test the query filter applies), so
+the stored bytes are returned without decoding any document. Both the key sets and the stored values are read
+under one index read lock. Anything else (nested fields, operators, OR, non-string values, an unindexed
+field) uses `QueryRaw` with the full filter. Checked by a randomised test (values of every JSON type,
+overwrites, deletes) against plain equality on the decoded documents.
+
 ## Change in `cache/cacheleveldown/leveldown.go`
 
 With `OPTIMUSDB_IPFS_SYNC=false` the store cache (which records the store heads after every write) is

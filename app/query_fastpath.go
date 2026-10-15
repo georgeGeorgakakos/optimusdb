@@ -151,6 +151,28 @@ func (r RawDocs) MarshalJSON() ([]byte, error) {
 	return append(out, ']'), nil
 }
 
+// exactRawQuerier is implemented by the patched go-orbit-db document store (third_party/go-orbit-db).
+type exactRawQuerier interface {
+	QueryRawExact(equal map[string]string) ([][]byte, bool)
+}
+
+// exactEqualities returns the criteria as field -> value when they are a single set of string equalities on
+// top-level fields (what criteriaFilter then checks with plain equality); ok is false for anything else.
+func exactEqualities(criteria []map[string]interface{}) (map[string]string, bool) {
+	if len(criteria) != 1 || len(criteria[0]) == 0 {
+		return nil, false
+	}
+	eq := make(map[string]string, len(criteria[0]))
+	for k, v := range criteria[0] {
+		s, ok := v.(string)
+		if !ok || k == "" || strings.Contains(k, ".") {
+			return nil, false
+		}
+		eq[k] = s
+	}
+	return eq, true
+}
+
 // rawQuerier is implemented by the patched go-orbit-db document store (third_party/go-orbit-db).
 type rawQuerier interface {
 	QueryRaw(ctx context.Context, equal map[string]string, filter func(doc interface{}) (bool, error)) ([][]byte, error)
@@ -182,6 +204,14 @@ func queryLocalRaw(kb *KnowledgeBaseDB, criteria []map[string]interface{}, dstyp
 			return nil, false, nil
 		}
 		return RawDocs{b}, true, nil
+	}
+	// Only string equalities on top-level fields, all of them indexed: the index answers exactly, no decoding.
+	if eq, ok := exactEqualities(criteria); ok {
+		if ex, ok := store.(exactRawQuerier); ok {
+			if docs, ok := ex.QueryRawExact(eq); ok {
+				return RawDocs(docs), true, nil
+			}
+		}
 	}
 	docs, err := rq.QueryRaw(context.Background(), indexableEqualities(criteria), criteriaFilter(criteria))
 	if err != nil {
