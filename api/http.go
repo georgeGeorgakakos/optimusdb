@@ -1117,6 +1117,7 @@ func commandHandler(reqChan chan<- app.Request, resChan <-chan interface{}) http
 			Graph_traversal: req.Graph_traversal,
 			Options:         req.Options,
 			Reply:           make(chan interface{}, 1),
+			RawOK:           true,
 		}
 
 		if serviceReq.Method == app.POST {
@@ -1131,17 +1132,32 @@ func commandHandler(reqChan chan<- app.Request, resChan <-chan interface{}) http
 		reqChan <- serviceReq     // send request to processing
 		res := <-serviceReq.Reply // wait for this request's own response
 
-		_, err = json.Marshal(res)
-		if err != nil {
+		if result, ok := res.(map[string]interface{}); ok && result["error"] != nil {
+			sendErrorResponse(w, http.StatusBadRequest, "Error processing request")
+			return
+		}
+		// Stored documents (app.RawDocs) are written as they are, without decoding and encoding them again.
+		if raw, ok := res.(app.RawDocs); ok {
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"status":200,"data":[`))
+			for i, d := range raw {
+				if i > 0 {
+					_, _ = w.Write([]byte{','})
+				}
+				_, _ = w.Write(d)
+			}
+			_, _ = w.Write([]byte("]}\n"))
+			return
+		}
+		// Encode the response once (it was encoded twice: a json.Marshal to check it, then the encoder; a
+		// query result of a few thousand documents made that a large share of the request time).
+		var buf bytes.Buffer
+		if err := json.NewEncoder(&buf).Encode(map[string]interface{}{"status": http.StatusOK, "data": res}); err != nil {
 			sendErrorResponse(w, http.StatusBadRequest, "Internal Server Error, parsing the service Request json Marshal")
 			return
 		}
-
-		if result, ok := res.(map[string]interface{}); ok && result["error"] != nil {
-			sendErrorResponse(w, http.StatusBadRequest, "Error processing request")
-		} else {
-			sendSuccessResponse(w, res)
-		}
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(buf.Bytes())
 	}
 }
 

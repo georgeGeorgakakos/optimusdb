@@ -139,6 +139,10 @@ func createDatabase(temporary bool) (string, error) {
 		// And: https://github.com/ipfs/kubo/blob/master/docs/experimental-features.md
 	}
 
+	if ipfsNoSync() {
+		setFlatfsSync(cfg.Datastore.Spec, false)
+	}
+
 	// Configure swarm addresses/where to listen
 	// TODO : make ip configurable
 	cfg.Addresses.Swarm = []string{
@@ -168,14 +172,17 @@ func createAgentIpfs(ctx context.Context, repoPath string) (*core.IpfsNode, erro
 	// Replicas fetch store entries over bitswap from the peers they are connected to, which ask their connected
 	// peers directly, so provider records are not needed when the agents are connected to each other; the
 	// announcements otherwise run DHT queries for each written block. Unset: kubo's default (announce).
+	// The value is written to the repository's config, so it is also set back when the variable is unset.
+	noProvide := false
 	if v := strings.ToLower(strings.TrimSpace(os.Getenv("OPTIMUSDB_IPFS_PROVIDE"))); v == "false" || v == "0" || v == "off" {
-		if rc, cerr := repo.Config(); cerr == nil && !rc.Experimental.StrategicProviding {
-			rc.Experimental.StrategicProviding = true
-			if serr := repo.SetConfig(rc); serr != nil {
-				logger.Warn("[WARN] could not turn off DHT providing: %v", serr)
-			} else {
-				logger.Info("[INFO] IPFS: DHT providing off")
-			}
+		noProvide = true
+	}
+	if rc, cerr := repo.Config(); cerr == nil && rc.Experimental.StrategicProviding != noProvide {
+		rc.Experimental.StrategicProviding = noProvide
+		if serr := repo.SetConfig(rc); serr != nil {
+			logger.Warn("[WARN] could not set DHT providing: %v", serr)
+		} else {
+			logger.Info("[INFO] IPFS: DHT providing %v", map[bool]string{true: "off", false: "on"}[noProvide])
 		}
 	}
 
@@ -227,4 +234,40 @@ func SpawnEphemeral(ctx context.Context) (*core.IpfsNode, error) {
 		logger.Info("[INFO] IPFS swarm communication (peer-to-peer connections) Listening on %s", addr)
 	}
 	return node, nil
+}
+
+// ipfsNoSync reports OPTIMUSDB_IPFS_SYNC=false. Blocks of a NEW repository (the flatfs setting is written when
+// the repository is created; the testbed creates one at every reset) and the store-head cache (see
+// third_party/go-orbit-db/cache/cacheleveldown) are then written without forcing each write to disk: data
+// reaches the file system at once, but the last writes before a power loss may be lost (files are written and
+// renamed atomically, so the store is not corrupted). This is the durability of SQLite in WAL mode with
+// synchronous=NORMAL, the setting Corrosion uses. Unset: kubo's default (fsync every block).
+func ipfsNoSync() bool {
+	v := strings.ToLower(strings.TrimSpace(os.Getenv("OPTIMUSDB_IPFS_SYNC")))
+	return v == "false" || v == "0" || v == "off"
+}
+
+// setFlatfsSync sets "sync" on every flatfs datastore in a datastore spec; it reports whether one was changed.
+func setFlatfsSync(spec map[string]interface{}, sync bool) bool {
+	changed := false
+	if spec == nil {
+		return false
+	}
+	if t, _ := spec["type"].(string); t == "flatfs" {
+		if cur, ok := spec["sync"].(bool); !ok || cur != sync {
+			spec["sync"] = sync
+			changed = true
+		}
+	}
+	if child, ok := spec["child"].(map[string]interface{}); ok {
+		changed = setFlatfsSync(child, sync) || changed
+	}
+	if mounts, ok := spec["mounts"].([]interface{}); ok {
+		for _, m := range mounts {
+			if mm, ok := m.(map[string]interface{}); ok {
+				changed = setFlatfsSync(mm, sync) || changed
+			}
+		}
+	}
+	return changed
 }

@@ -1,7 +1,8 @@
 # third_party/go-orbit-db
 
-A copy of `berty.tech/go-orbit-db` **v1.21.0** (tests removed) with three files changed:
-`stores/documentstore/index.go`, `stores/documentstore/document.go` and `stores/basestore/base_store.go`. `go.mod` points to it with
+A copy of `berty.tech/go-orbit-db` **v1.21.0** (tests removed) with four files changed:
+`stores/documentstore/index.go`, `stores/documentstore/document.go`, `stores/basestore/base_store.go` and
+`cache/cacheleveldown/leveldown.go`. `go.mod` points to it with
 `replace berty.tech/go-orbit-db => ./third_party/go-orbit-db`.
 
 ## Why
@@ -46,6 +47,21 @@ indexes) and by tests of the cache's copy and staleness rules.
 directly. Same result, constant cost. `app/query_fastpath.go` uses it for queries and updates whose only
 condition is `{"_id": "<id>"}`.
 
-**Faster reads.** `Get` and `Query` use the decoded-document cache. The new `QueryIndexed` reads only the
+**Faster reads.** `Get` and `Query` use the decoded-document cache; a cached document is filtered without
+being copied, and only matching documents are copied for the caller. `QueryIndexed` intersects the key sets
+of all indexed equality conditions before reading any document. `HasKey` checks existence without decoding. The new `QueryIndexed` reads only the
 documents selected by an equality condition on an indexed field and applies the full filter to each, so its
 result equals `Query` with that filter. `queryLocalDB` uses it for single-filter queries with such a condition.
+
+## Change in `cache/cacheleveldown/leveldown.go`
+
+With `OPTIMUSDB_IPFS_SYNC=false` the store cache (which records the store heads after every write) is
+opened with goleveldb's `NoSync`: records are still written to its log, but not flushed to disk on every
+write. Unset, nothing changes.
+
+## Option in `stores/basestore/base_store.go`
+
+`OPTIMUSDB_LOG_REFS=<n>` sets how many earlier entries each new log entry references (upstream default 64).
+Fewer references mean less work per append and smaller entries, but replicas catching up on a long history
+(e.g. after a partition) follow more pointers one by one. Unset: 64.
+

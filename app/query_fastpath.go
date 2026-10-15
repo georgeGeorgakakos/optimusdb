@@ -8,7 +8,9 @@ package app
 // with the size of the store.
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"strings"
 
 	"berty.tech/go-orbit-db/iface"
@@ -81,13 +83,20 @@ func persistRemoteRows(optimusdb *KnowledgeBaseDB, dstype string, rows []map[str
 		return
 	}
 
+	// Existence check without reading the document (patched document store); this runs for every row of a
+	// query result, most of which are local, so reading and copying each document doubled the cost of a query.
+	hk, cheap := store.(interface{ HasKey(string) bool })
 	var missing []interface{}
 	for _, row := range rows {
 		id, ok := row["_id"].(string)
 		if !ok || id == "" {
 			continue
 		}
-		if existing, err := getDocsByID(ctx, store, id); err == nil && len(existing) > 0 {
+		if cheap {
+			if hk.HasKey(id) {
+				continue
+			}
+		} else if existing, err := getDocsByID(ctx, store, id); err == nil && len(existing) > 0 {
 			continue
 		}
 		doc := make(map[string]interface{}, len(row))
@@ -119,4 +128,64 @@ func toDocMaps(results []interface{}) []map[string]interface{} {
 		}
 	}
 	return documents
+}
+
+// RawDocs is a query result made of stored JSON documents. The HTTP API writes it as it is; for any other
+// consumer it encodes as a JSON array of the documents.
+type RawDocs [][]byte
+
+// MarshalJSON writes the documents as a JSON array.
+func (r RawDocs) MarshalJSON() ([]byte, error) {
+	n := 2
+	for _, d := range r {
+		n += len(d) + 1
+	}
+	out := make([]byte, 0, n)
+	out = append(out, '[')
+	for i, d := range r {
+		if i > 0 {
+			out = append(out, ',')
+		}
+		out = append(out, d...)
+	}
+	return append(out, ']'), nil
+}
+
+// rawQuerier is implemented by the patched go-orbit-db document store (third_party/go-orbit-db).
+type rawQuerier interface {
+	QueryRaw(ctx context.Context, equal map[string]string, filter func(doc interface{}) (bool, error)) ([][]byte, error)
+	GetRaw(key string) []byte
+}
+
+// queryLocalRaw answers a query from the local replica with the stored JSON of the matching documents: the
+// same documents as queryLocalDB, without decoding them for the response and encoding them again. ok is
+// false when the store cannot (the caller then uses queryLocalDB).
+func queryLocalRaw(kb *KnowledgeBaseDB, criteria []map[string]interface{}, dstype string) (RawDocs, bool, error) {
+	store, err := resolveDocStoreByType(kb, dstype)
+	if err != nil || store == nil {
+		return nil, false, err
+	}
+	rq, ok := store.(rawQuerier)
+	if !ok {
+		return nil, false, nil
+	}
+	if id, ok := idOnlyCriteria(criteria); ok {
+		if strings.Contains(id, " ") {
+			return nil, false, nil // multi-term keys are matched differently by Get: use queryLocalDB
+		}
+		b := rq.GetRaw(id)
+		if b == nil {
+			return RawDocs{}, true, nil
+		}
+		// queryLocalDB returns only JSON objects: anything else goes through it (and its error handling)
+		if t := bytes.TrimLeft(b, " \t\r\n"); len(t) == 0 || t[0] != '{' || !json.Valid(b) {
+			return nil, false, nil
+		}
+		return RawDocs{b}, true, nil
+	}
+	docs, err := rq.QueryRaw(context.Background(), indexableEqualities(criteria), criteriaFilter(criteria))
+	if err != nil {
+		return nil, true, err
+	}
+	return RawDocs(docs), true, nil
 }

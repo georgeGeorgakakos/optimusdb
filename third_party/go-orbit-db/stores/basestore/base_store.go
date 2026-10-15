@@ -5,6 +5,9 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
+	"os"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -246,7 +249,14 @@ func (b *BaseStore) InitBaseStore(ipfs coreapi.CoreAPI, identity *identityprovid
 		return fmt.Errorf("unable to init error: %w", err)
 	}
 
+	// Patched for OptimusDB: OPTIMUSDB_LOG_REFS sets the default number of earlier entries each new entry
+	// references (upstream: 64). Appending walks that many entries back from the heads and stores pointers to
+	// those at power-of-two distances, so a smaller value means less work per write and smaller entries; the
+	// pointers only speed up fetching long histories in parallel.
 	b.referenceCount = 64
+	if v, err := strconv.Atoi(strings.TrimSpace(os.Getenv("OPTIMUSDB_LOG_REFS"))); err == nil && v > 0 {
+		b.referenceCount = v
+	}
 	if options.ReferenceCount != nil {
 		b.referenceCount = *options.ReferenceCount
 	}

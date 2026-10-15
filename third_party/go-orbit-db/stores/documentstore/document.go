@@ -229,8 +229,20 @@ func (o *orbitDBDocumentStore) filterKeys(docIndex *documentIndex, keys []string
 		if doc == nil {
 			continue
 		}
+		raw := doc.([]byte)
 
-		value, err := o.decode(docIndex, indexKey, doc.([]byte))
+		// A cached document is filtered as it is and copied only if it matches (most candidates of a scan do
+		// not); the filter only reads it.
+		if ref, ok := docIndex.cachedRef(indexKey, raw); ok {
+			if match, err := filter(ref); err != nil {
+				return nil, fmt.Errorf("error while filtering value: %w", err)
+			} else if match {
+				documents = append(documents, copyMap(ref))
+			}
+			continue
+		}
+
+		value, err := o.decode(docIndex, indexKey, raw)
 		if err != nil {
 			return nil, fmt.Errorf("unable to unmarshal document: %w", err)
 		}
@@ -245,6 +257,71 @@ func (o *orbitDBDocumentStore) filterKeys(docIndex *documentIndex, keys []string
 	return documents, nil
 }
 
+// rawMatches returns the stored JSON of the documents among keys that pass filter (the stored bytes are never
+// modified, so they are returned without copying). Patched for OptimusDB: lets a query answer with the stored
+// documents instead of decoding them and encoding them again.
+func (o *orbitDBDocumentStore) rawMatches(docIndex *documentIndex, keys []string, filter func(doc interface{}) (bool, error)) ([][]byte, error) {
+	var out [][]byte
+	for _, k := range keys {
+		v := docIndex.Get(k)
+		if v == nil {
+			continue
+		}
+		raw := v.([]byte)
+		var doc interface{}
+		if ref, ok := docIndex.cachedRef(k, raw); ok {
+			doc = ref
+		} else {
+			d, err := o.decode(docIndex, k, raw)
+			if err != nil {
+				return nil, fmt.Errorf("unable to unmarshal document: %w", err)
+			}
+			doc = d
+		}
+		match, err := filter(doc)
+		if err != nil {
+			return nil, fmt.Errorf("error while filtering value: %w", err)
+		}
+		if match {
+			out = append(out, raw)
+		}
+	}
+	return out, nil
+}
+
+// QueryRaw is Query returning the stored JSON of the matching documents. With equal, it reads only the
+// documents selected by the field indexes (as QueryIndexed); otherwise, or when no field is indexed, it scans.
+// Patched for OptimusDB.
+func (o *orbitDBDocumentStore) QueryRaw(ctx context.Context, equal map[string]string, filter func(doc interface{}) (bool, error)) ([][]byte, error) {
+	docIndex, ok := o.Index().(*documentIndex)
+	if !ok {
+		return nil, fmt.Errorf("unable to cast index to documentIndex")
+	}
+	keys, indexed := docIndex.keysByFields(equal)
+	if len(equal) == 0 || !indexed {
+		keys = docIndex.Keys()
+	}
+	return o.rawMatches(docIndex, keys, filter)
+}
+
+// GetRaw returns the stored JSON of the document under key (nil if none). Patched for OptimusDB.
+func (o *orbitDBDocumentStore) GetRaw(key string) []byte {
+	docIndex, ok := o.Index().(*documentIndex)
+	if !ok {
+		return nil
+	}
+	if v, ok := docIndex.Get(key).([]byte); ok {
+		return v
+	}
+	return nil
+}
+
+// HasKey reports whether a document is stored under key, without reading it. Patched for OptimusDB.
+func (o *orbitDBDocumentStore) HasKey(key string) bool {
+	docIndex, ok := o.Index().(*documentIndex)
+	return ok && docIndex.hasKey(key)
+}
+
 // QueryIndexed is Query restricted to the documents whose top-level fields equal the given string values,
 // read through the field indexes (index.go, change 4). The filter is still applied to every candidate, so
 // the result is the same as Query with that filter whenever the filter implies the equalities. indexed is
@@ -256,22 +333,12 @@ func (o *orbitDBDocumentStore) QueryIndexed(ctx context.Context, equal map[strin
 		return nil, false, fmt.Errorf("unable to cast index to documentIndex")
 	}
 
-	var best []string
-	found := false
-	for f, v := range equal {
-		keys, ok := docIndex.keysByField(f, v)
-		if !ok {
-			continue
-		}
-		if !found || len(keys) < len(best) {
-			best, found = keys, true
-		}
-	}
+	keys, found := docIndex.keysByFields(equal) // documents satisfying every indexed equality
 	if !found {
 		return nil, false, nil
 	}
 
-	docs, err := o.filterKeys(docIndex, best, filter)
+	docs, err := o.filterKeys(docIndex, keys, filter)
 	return docs, true, err
 }
 

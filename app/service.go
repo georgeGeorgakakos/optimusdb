@@ -122,6 +122,9 @@ type Request struct {
 	// Reply receives this request's response. Each HTTP request has its own channel, so requests are processed
 	// concurrently and every caller gets its own answer. Nil (e.g. the interactive shell) falls back to resChan.
 	Reply chan interface{} `json:"-"`
+
+	// RawOK: the caller (the HTTP API) can send a RawDocs result as it is (query_fastpath.go).
+	RawOK bool `json:"-"`
 }
 
 // SQLQuery represents a parsed SQL query
@@ -305,6 +308,16 @@ func handleRequest(knowledgeBaseDB *KnowledgeBaseDB, req Request, hostCID host.H
 
 			// FIX: Propagate DSType to query options for store-aware routing
 			opt.DSType = req.DSType
+
+			// Local answer as stored JSON (no decode / re-encode): for the HTTP API, when the result is the local
+			// rows unchanged, i.e. no annotations and a strategy that returns local rows when there are any.
+			if req.RawOK && !opt.AnnotateSource && !opt.ForceRemote && opt.MinRows <= 0 && opt.IncludeLocal &&
+				(opt.Strategy == StrategyLocalOnly || opt.Strategy == StrategyLocalThenRemoteMerge) {
+				if raw, ok, rerr := queryLocalRaw(knowledgeBaseDB, req.Criteria, req.DSType); ok && rerr == nil && len(raw) > 0 {
+					res = raw
+					break
+				}
+			}
 
 			var out []map[string]interface{}
 			var err error
@@ -2199,7 +2212,40 @@ func queryLocalDB(knowledgeBaseDB *KnowledgeBaseDB, criteria []map[string]interf
 		return toDocMaps(docs), nil
 	}
 
-	filter := func(doc interface{}) (bool, error) {
+	filter := criteriaFilter(criteria)
+
+	// Equality conditions on indexed fields read only the matching documents (field indexes in the patched
+	// go-orbit-db document store); the filter is still applied to each of them, so the result is the same.
+	var results []interface{}
+	indexed := false
+	if eq := indexableEqualities(criteria); len(eq) > 0 {
+		if iq, ok := dbDocStore.(indexedQuerier); ok {
+			results, indexed, err = iq.QueryIndexed(ctx, eq, filter)
+		}
+	}
+	if !indexed && err == nil {
+		results, err = dbDocStore.Query(ctx, filter)
+	}
+
+	if err != nil {
+		return nil, fmt.Errorf("query execution failed: %w", err)
+	}
+
+	var documents []map[string]interface{}
+	for _, result := range results {
+		doc, ok := result.(map[string]interface{})
+		if ok {
+			documents = append(documents, doc)
+		}
+	}
+
+	return documents, nil
+}
+
+// criteriaFilter is the document filter of a query: a document matches when it satisfies every condition of
+// at least one filter in criteria (OR of ANDs); conditions are equalities or operators ($gte, $in, ...).
+func criteriaFilter(criteria []map[string]interface{}) func(doc interface{}) (bool, error) {
+	return func(doc interface{}) (bool, error) {
 		record, ok := doc.(map[string]interface{})
 		if !ok {
 			return false, nil
@@ -2242,33 +2288,6 @@ func queryLocalDB(knowledgeBaseDB *KnowledgeBaseDB, criteria []map[string]interf
 
 		return false, nil // No criteria matched
 	}
-
-	// Equality conditions on indexed fields read only the matching documents (field indexes in the patched
-	// go-orbit-db document store); the filter is still applied to each of them, so the result is the same.
-	var results []interface{}
-	indexed := false
-	if eq := indexableEqualities(criteria); len(eq) > 0 {
-		if iq, ok := dbDocStore.(indexedQuerier); ok {
-			results, indexed, err = iq.QueryIndexed(ctx, eq, filter)
-		}
-	}
-	if !indexed && err == nil {
-		results, err = dbDocStore.Query(ctx, filter)
-	}
-
-	if err != nil {
-		return nil, fmt.Errorf("query execution failed: %w", err)
-	}
-
-	var documents []map[string]interface{}
-	for _, result := range results {
-		doc, ok := result.(map[string]interface{})
-		if ok {
-			documents = append(documents, doc)
-		}
-	}
-
-	return documents, nil
 }
 
 /*  Change of Method 25.10.2025

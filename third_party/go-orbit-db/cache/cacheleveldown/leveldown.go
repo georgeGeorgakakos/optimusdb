@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path"
+	"strings"
 	"sync"
 
 	"berty.tech/go-orbit-db/address"
@@ -90,7 +91,14 @@ func (l *levelDownCache) Load(directory string, dbAddress address.Address) (ds d
 	if directory == InMemoryDirectory {
 		ds, err = leveldb.NewDatastore("", nil)
 	} else {
-		ds, err = leveldb.NewDatastore(keyPath, nil)
+		// Patched for OptimusDB: OPTIMUSDB_IPFS_SYNC=false opens the cache without an fsync on every write
+		// (the store heads are written here after every operation). goleveldb still writes each record to
+		// its log; only the forced flush to disk is skipped, as with SQLite's synchronous=NORMAL in WAL mode.
+		var opts *leveldb.Options
+		if v := strings.ToLower(strings.TrimSpace(os.Getenv("OPTIMUSDB_IPFS_SYNC"))); v == "false" || v == "0" || v == "off" {
+			opts = &leveldb.Options{NoSync: true}
+		}
+		ds, err = leveldb.NewDatastore(keyPath, opts)
 	}
 
 	if err != nil {

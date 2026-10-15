@@ -158,6 +158,70 @@ func (i *documentIndex) keysByField(field, value string) ([]string, bool) {
 	return keys, true
 }
 
+// keysByFields returns the keys of the documents that satisfy every equality on an indexed field (the
+// intersection of the per-value key sets). ok is false when none of the fields is indexed.
+func (i *documentIndex) keysByFields(equal map[string]string) ([]string, bool) {
+	i.muIndex.RLock()
+	defer i.muIndex.RUnlock()
+
+	if i.fieldsOff {
+		return nil, false
+	}
+	var sets []map[string]struct{}
+	for f, v := range equal {
+		vals, ok := i.byField[f]
+		if !ok {
+			continue
+		}
+		sets = append(sets, vals[v]) // nil (no document has the value) is an empty set
+	}
+	if len(sets) == 0 {
+		return nil, false
+	}
+	smallest := 0
+	for j := range sets {
+		if len(sets[j]) < len(sets[smallest]) {
+			smallest = j
+		}
+	}
+	keys := make([]string, 0, len(sets[smallest]))
+next:
+	for k := range sets[smallest] {
+		for j, set := range sets {
+			if j == smallest {
+				continue
+			}
+			if _, in := set[k]; !in {
+				continue next
+			}
+		}
+		keys = append(keys, k)
+	}
+	return keys, true
+}
+
+// hasKey reports whether a document is stored under key, without decoding it.
+func (i *documentIndex) hasKey(key string) bool {
+	i.muIndex.RLock()
+	defer i.muIndex.RUnlock()
+	_, ok := i.index[key]
+	return ok
+}
+
+// cachedRef returns the cached decoded document itself (no copy) if it was decoded from exactly raw. Only for
+// read-only use, such as evaluating a filter; anything returned to a caller must be copied first.
+func (i *documentIndex) cachedRef(key string, raw []byte) (map[string]interface{}, bool) {
+	v, ok := i.decoded.Load(key)
+	if !ok {
+		return nil, false
+	}
+	d := v.(decodedDoc)
+	if !sameBytes(d.raw, raw) {
+		return nil, false
+	}
+	return d.doc, true
+}
+
 // cachedDoc returns a copy of the decoded document for key if it was decoded from exactly raw.
 func (i *documentIndex) cachedDoc(key string, raw []byte) (map[string]interface{}, bool) {
 	v, ok := i.decoded.Load(key)
