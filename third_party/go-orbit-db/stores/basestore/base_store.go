@@ -1015,7 +1015,65 @@ func (b *BaseStore) replicate() error {
 		return fmt.Errorf("unable to listen on pubsub: %w", err)
 	}
 
+	b.headsAnnouncer(topic)
+
 	return nil
+}
+
+// headsAnnouncer publishes this replica's heads periodically (anti-entropy). Patched for OptimusDB.
+//
+// Upstream announces heads only when this replica writes and when a peer joins the store's pubsub topic.
+// Announcements made while a network partition lasts are lost, and after a short partition the libp2p
+// connections can survive, so no join event fires and a replica can stay behind until the next write
+// (seen in E5 with a 30 s partition). Every OPTIMUSDB_HEADS_INTERVAL seconds (default 10; 0 turns it off) the
+// current heads are published again: always when they are small (up to 64 KiB of payload, e.g. single-document
+// writes), otherwise when they changed and at least every sixth interval. A receiver that already has the heads
+// finds nothing to fetch.
+func (b *BaseStore) headsAnnouncer(topic iface.PubSubTopic) {
+	sec := 10
+	if v, err := strconv.Atoi(strings.TrimSpace(os.Getenv("OPTIMUSDB_HEADS_INTERVAL"))); err == nil && v >= 0 {
+		sec = v
+	}
+	if sec == 0 {
+		return
+	}
+	go func() {
+		t := time.NewTicker(time.Duration(sec) * time.Second)
+		defer t.Stop()
+		last, quiet := "", 0
+		for {
+			select {
+			case <-b.ctx.Done():
+				return
+			case <-t.C:
+			}
+			heads := b.OpLog().Heads().Slice()
+			if len(heads) == 0 {
+				continue
+			}
+			var key strings.Builder
+			size := 0
+			for _, h := range heads {
+				key.WriteString(h.GetHash().String())
+				size += len(h.GetPayload())
+			}
+			quiet++
+			// small heads (single documents, the normal case) are re-announced every interval, so a replica that
+			// missed them during a partition catches up within one interval of healing; large heads (a bulk-load
+			// batch of up to 512 KiB) only when they change and every sixth interval, to keep idle traffic low
+			if key.String() == last && quiet < 6 && size > 64*1024 {
+				continue
+			}
+			ctx, cancel := context.WithTimeout(b.ctx, 10*time.Second)
+			err := b.handleEventWrite(ctx, &stores.EventWrite{Address: b.Address(), Heads: heads}, topic)
+			cancel()
+			if err != nil {
+				b.logger.Debug("unable to announce heads", zap.Error(err))
+				continue
+			}
+			last, quiet = key.String(), 0
+		}
+	}()
 }
 
 func (b *BaseStore) storeListener(topic iface.PubSubTopic) error {

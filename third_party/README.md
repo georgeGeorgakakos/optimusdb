@@ -75,3 +75,18 @@ write. Unset, nothing changes.
 Fewer references mean less work per append and smaller entries, but replicas catching up on a long history
 (e.g. after a partition) follow more pointers one by one. Unset: 64.
 
+
+## Periodic head announcement in `stores/basestore/base_store.go`
+
+Upstream announces a store's heads only when the replica writes and when a peer joins the store's pubsub topic.
+Announcements made during a network partition are lost, and after a short partition the connections can survive,
+so no join event fires and a replica can stay behind until the next write (quick run 5, E5 at 0 % contention: three
+content states remained 120 s after healing). Every `OPTIMUSDB_HEADS_INTERVAL` seconds (default 10; `0` turns it
+off) the current heads are published again: always when they are small (up to 64 KiB of payload, the normal case
+of single-document writes), so a replica catches up within one interval of healing; large heads (a bulk-load
+batch) only when they changed and at least every sixth interval, to keep idle traffic low. A receiver that already has the heads finds nothing to fetch.
+
+The agent also keeps the peers it was asked to connect to connected (`ipfs/ipfsNodeAct.go`): libp2p does not dial
+a lost connection again and the node has no bootstrap list, so every `OPTIMUSDB_RECONNECT_INTERVAL` seconds
+(default 10; `0` off) each remembered peer that is not connected is dialled again. A reconnection makes the stores
+exchange heads.
