@@ -241,7 +241,7 @@ func serviceConcurrency() int {
 func handleRequest(knowledgeBaseDB *KnowledgeBaseDB, req Request, hostCID host.Host, logChan chan Log,
 	rdbms *KnowledgeBaseSQLite) interface{} {
 	{
-		logChan <- Log{Info, "Received service request"}
+		logger.Info("Received service request %s", req.Method.Cmd) // direct, level-checked (was a logChan send per request)
 
 		var res interface{}
 		switch strings.ToLower(req.Method.Cmd) {

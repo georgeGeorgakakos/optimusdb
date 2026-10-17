@@ -219,3 +219,17 @@ func queryLocalRaw(kb *KnowledgeBaseDB, criteria []map[string]interface{}, dstyp
 	}
 	return RawDocs(docs), true, nil
 }
+
+// LocalDocRaw returns the stored JSON of the document with this id in the local replica of store dstype, as
+// the query command with criteria [{"_id": id}] would return it locally. ok is false when the store cannot
+// answer this way (the caller then uses the query command); found is false when there is no such document.
+func LocalDocRaw(kb *KnowledgeBaseDB, dstype, id string) (doc []byte, found bool, ok bool) {
+	raw, ok, err := queryLocalRaw(kb, []map[string]interface{}{{"_id": id}}, dstype)
+	if !ok || err != nil {
+		return nil, false, false
+	}
+	if len(raw) == 0 {
+		return nil, false, true
+	}
+	return raw[0], true, true
+}

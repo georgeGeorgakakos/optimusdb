@@ -1131,33 +1131,87 @@ func commandHandler(reqChan chan<- app.Request, resChan <-chan interface{}) http
 
 		reqChan <- serviceReq     // send request to processing
 		res := <-serviceReq.Reply // wait for this request's own response
+		writeServiceResult(w, res)
+	}
+}
 
-		if result, ok := res.(map[string]interface{}); ok && result["error"] != nil {
-			sendErrorResponse(w, http.StatusBadRequest, "Error processing request")
-			return
-		}
-		// Stored documents (app.RawDocs) are written as they are, without decoding and encoding them again.
-		if raw, ok := res.(app.RawDocs); ok {
-			w.WriteHeader(http.StatusOK)
-			_, _ = w.Write([]byte(`{"status":200,"data":[`))
-			for i, d := range raw {
-				if i > 0 {
-					_, _ = w.Write([]byte{','})
-				}
-				_, _ = w.Write(d)
-			}
-			_, _ = w.Write([]byte("]}\n"))
-			return
-		}
-		// Encode the response once (it was encoded twice: a json.Marshal to check it, then the encoder; a
-		// query result of a few thousand documents made that a large share of the request time).
-		var buf bytes.Buffer
-		if err := json.NewEncoder(&buf).Encode(map[string]interface{}{"status": http.StatusOK, "data": res}); err != nil {
-			sendErrorResponse(w, http.StatusBadRequest, "Internal Server Error, parsing the service Request json Marshal")
-			return
-		}
+// writeServiceResult writes a service response as {"status":200,"data":...}; stored documents (app.RawDocs)
+// are written as they are, without decoding and encoding them again.
+func writeServiceResult(w http.ResponseWriter, res interface{}) {
+	if result, ok := res.(map[string]interface{}); ok && result["error"] != nil {
+		sendErrorResponse(w, http.StatusBadRequest, "Error processing request")
+		return
+	}
+	// Stored documents (app.RawDocs) are written as they are, without decoding and encoding them again.
+	if raw, ok := res.(app.RawDocs); ok {
 		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write(buf.Bytes())
+		_, _ = w.Write([]byte(`{"status":200,"data":[`))
+		for i, d := range raw {
+			if i > 0 {
+				_, _ = w.Write([]byte{','})
+			}
+			_, _ = w.Write(d)
+		}
+		_, _ = w.Write([]byte("]}\n"))
+		return
+	}
+	// Encode the response once (it was encoded twice: a json.Marshal to check it, then the encoder; a
+	// query result of a few thousand documents made that a large share of the request time).
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(map[string]interface{}{"status": http.StatusOK, "data": res}); err != nil {
+		sendErrorResponse(w, http.StatusBadRequest, "Internal Server Error, parsing the service Request json Marshal")
+		return
+	}
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(buf.Bytes())
+}
+
+// docHandler answers GET <prefix><id>: the document stored under that id, in the same response format as the
+// query command with criteria [{"_id": id}] (and the same strategies). When the local replica has the document
+// and the strategy returns local rows (LOCAL_ONLY, LOCAL_THEN_REMOTE_MERGE), it is written straight from the
+// HTTP handler: no request body to decode, no hand-off to the service loop and back. Otherwise the request goes
+// through the query command as usual (peers are asked as the strategy says).
+func docHandler(kb *app.KnowledgeBaseDB, reqChan chan<- app.Request, prefix string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			sendErrorResponse(w, http.StatusMethodNotAllowed, "Method not allowed")
+			return
+		}
+		id := strings.TrimPrefix(r.URL.Path, prefix)
+		if id == "" {
+			sendErrorResponse(w, http.StatusBadRequest, "missing document id")
+			return
+		}
+		q := r.URL.Query()
+		dstype := q.Get("dstype")
+		strategy := app.QueryStrategy(q.Get("strategy"))
+		if strategy == "" {
+			strategy = app.StrategyLocalThenRemoteMerge
+		}
+		if strategy == app.StrategyLocalOnly || strategy == app.StrategyLocalThenRemoteMerge {
+			if doc, found, ok := app.LocalDocRaw(kb, dstype, id); ok && (found || strategy == app.StrategyLocalOnly) {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusOK)
+				if found {
+					_, _ = w.Write([]byte(`{"status":200,"data":[`))
+					_, _ = w.Write(doc)
+					_, _ = w.Write([]byte("]}\n"))
+				} else {
+					_, _ = w.Write([]byte(`{"status":200,"data":[]}` + "\n"))
+				}
+				return
+			}
+		}
+		serviceReq := app.Request{
+			Method:   app.QUERY,
+			DSType:   dstype,
+			Criteria: []map[string]interface{}{{"_id": id}},
+			Options:  &app.QueryOptions{Strategy: strategy, IncludeLocal: true, AnnotateSource: false, DSType: dstype},
+			Reply:    make(chan interface{}, 1),
+			RawOK:    true,
+		}
+		reqChan <- serviceReq
+		writeServiceResult(w, <-serviceReq.Reply)
 	}
 }
 
@@ -1688,8 +1742,9 @@ func ServeHTTP(optimusdb *app.KnowledgeBaseDB, theLog *app.LoggerSQLite, reqChan
 	// middleware to handle CORS headers and preflight requests
 	mw := func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			ip := r.RemoteAddr
-			logChan <- app.Log{app.Info, "Received HTTP request from " + ip}
+			// Logged directly (level-checked) instead of through logChan: a channel send per request woke the log
+			// goroutine on every call even when INFO is not logged (the benchmark runs at WARN).
+			logger.Info("Received HTTP request from %s", r.RemoteAddr)
 			w.Header().Set("Access-Control-Allow-Origin", "*")
 			w.Header().Set("Access-Control-Allow-Methods", "*")
 			w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
@@ -1704,6 +1759,9 @@ func ServeHTTP(optimusdb *app.KnowledgeBaseDB, theLog *app.LoggerSQLite, reqChan
 
 	// Register command handler
 	server.Handle("/"+*config.FlagContext+"/command", mw(commandHandler(reqChan, resChan)))
+
+	// Read one document by id: GET /<context>/doc/<id>?dstype=<store>&strategy=<strategy>
+	server.Handle("/"+*config.FlagContext+"/doc/", mw(docHandler(optimusdb, reqChan, "/"+*config.FlagContext+"/doc/")))
 
 	// Agent status endpoint
 	server.Handle("/"+*config.FlagContext+"/agent/status", mw(agentStatusHandler(optimusdb)))
